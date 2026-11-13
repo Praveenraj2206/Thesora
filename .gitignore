@@ -1,42 +1,45 @@
 # Python cache
 __pycache__/
 *.py[cod]
-*.pyo
+*.egg-info/
+.pytest_cache/
 
 # Virtual environments
 .venv/
 venv/
 env/
 
-# Environment variables and secrets
+# Secrets and local settings (no API keys in the repo)
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 
-# IDE files
+# IDE and OS files
 .vscode/
 .idea/
-
-# Logs
-*.log
-
-# Generated RAG indexes and vector databases
-faiss_index/
-chroma_db/
-vectorstore/
-indexes/
-
-# Local models
-models/
-*.gguf
-
-# OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Temporary files
+# Logs and temporary files
+*.log
 *.tmp
 *.bak
-# Thesora: generated evaluation outputs
+
+# Runtime data: uploads and indexes are never committed
+data/uploads/
+data/index/
+faiss_index/
+indexes/
+vectorstore/
+chroma_db/
+
+# Local models and caches
+models/
+*.gguf
+.cache/
+
+# Generated evaluation outputs
 data/eval/results.json
 data/eval/verify_results.json
