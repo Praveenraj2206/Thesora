@@ -1,0 +1,35 @@
+[
+  {
+    "question": "How many frontier language models and molecular regression benchmarks did Busch et al. audit?",
+    "expected_answer": "Busch et al. audited 22 frontier language models across 12 molecular regression benchmarks.",
+    "expected_doc": "DejaVu2.pdf"
+  },
+  {
+    "question": "How much more often were higher reasoning levels flagged for retrieval than the lowest level?",
+    "expected_answer": "Experiments at higher reasoning levels were flagged for retrieval 89% more often than at the lowest reasoning level.",
+    "expected_doc": "DejaVu2.pdf"
+  },
+  {
+    "question": "What are the three types of intuition identified by Feinberg?",
+    "expected_answer": "The three types are intuition-guesswork, intuition that discovers something new, and fundamental intuition.",
+    "expected_doc": "DejaVu1.pdf"
+  },
+  {
+    "question": "Which brain regions are involved in deja vu according to Cleary and Brown?",
+    "expected_answer": "The hippocampus and parietal lobes are involved, and disruptions may cause incorrect reconstruction of events in memory.",
+    "expected_doc": "DejaVu1.pdf"
+  },
+  {
+    "question": "What causes the Mandela Effect in the strange attractor model?",
+    "expected_answer": "Orphaned topological cache pointers left after a bifurcation of a macro-attractor produce collective divergent memories.",
+    "expected_doc": "DejaVu3.pdf"
+  },
+  {
+    "question": "What is the capital of Australia and when was it founded?",
+    "should_abstain": true
+  },
+  {
+    "question": "What GPU model was used to train the models in these papers?",
+    "should_abstain": true
+  }
+]

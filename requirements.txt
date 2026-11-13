@@ -1,0 +1,18 @@
+# Core stack
+pymupdf>=1.24
+pypdf>=4.0
+langchain-text-splitters>=0.2
+sentence-transformers>=3.0
+faiss-cpu>=1.8
+torch>=2.2
+numpy>=1.26
+requests>=2.31
+# API / UI
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9   # required by FastAPI for file uploads
+httpx>=0.27               # FastAPI TestClient (tests/test_api.py)
+streamlit>=1.35
+# Improvements over naive RAG
+rank_bm25==0.2.2          # hybrid retrieval (BM25)
+rapidfuzz>=3.6,<4         # citation verification

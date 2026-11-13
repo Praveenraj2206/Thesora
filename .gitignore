@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Generated RAG indexes and vector databases
+faiss_index/
+chroma_db/
+vectorstore/
+indexes/
+
+# Local models
+models/
+*.gguf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+# Thesora: generated evaluation outputs
+data/eval/results.json
+data/eval/verify_results.json

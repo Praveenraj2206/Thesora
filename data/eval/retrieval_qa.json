@@ -1,0 +1,162 @@
+[
+  {
+    "question": "What is the Data Contamination Quiz?",
+    "kind": "exact",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "Data Contamination Quiz"
+    ]
+  },
+  {
+    "question": "Which benchmark collection is called MoleculeNet?",
+    "kind": "exact",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "MoleculeNet collection"
+    ]
+  },
+  {
+    "question": "What does 89% more often refer to?",
+    "kind": "exact",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "89% more often"
+    ]
+  },
+  {
+    "question": "Who are Golchin and Surdeanu?",
+    "kind": "exact",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "Golchin and Surdeanu"
+    ]
+  },
+  {
+    "question": "What consistency across SMILES and IUPAC is reported?",
+    "kind": "exact",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "1% or less"
+    ]
+  },
+  {
+    "question": "What is the 5-4-3-2-1 technique?",
+    "kind": "exact",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "5-4-3-2-1"
+    ]
+  },
+  {
+    "question": "What does the Fermi-Pasta-Ulam problem have to do with deja vu?",
+    "kind": "exact",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "Fermi Pasta Ulam"
+    ]
+  },
+  {
+    "question": "What is Dimension-W?",
+    "kind": "exact",
+    "doc": "DejaVu3.pdf",
+    "evidence": [
+      "Dimension-W"
+    ]
+  },
+  {
+    "question": "What are the Castor-Pollux architectures?",
+    "kind": "exact",
+    "doc": "DejaVu3.pdf",
+    "evidence": [
+      "Castor Pollux"
+    ]
+  },
+  {
+    "question": "What did Zaika (2023) demonstrate?",
+    "kind": "exact",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "Zaika (2023) demonstrated"
+    ]
+  },
+  {
+    "question": "Why does giving a model more thinking time make memorised numbers appear more often?",
+    "kind": "paraphrase",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "higher reasoning levels were flagged for retrieval"
+    ]
+  },
+  {
+    "question": "How reliably do chemistry models answer the same when a molecule is written in different notations?",
+    "kind": "paraphrase",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "1% or less"
+    ]
+  },
+  {
+    "question": "How many AI systems and chemistry test sets were examined in the audit?",
+    "kind": "paraphrase",
+    "doc": "DejaVu2.pdf",
+    "evidence": [
+      "22 frontier language models across 12 molecular regression benchmarks"
+    ]
+  },
+  {
+    "question": "Which parts of the brain are linked to the feeling of having lived a moment before?",
+    "kind": "paraphrase",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "hippocampus and parietal lobes"
+    ]
+  },
+  {
+    "question": "How can wrongly rebuilt memories explain the sense of familiarity?",
+    "kind": "paraphrase",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "incorrect reconstruction of events in memory"
+    ]
+  },
+  {
+    "question": "Which grounding exercise asks people to name sights, touches, sounds, smells and a taste?",
+    "kind": "paraphrase",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "five different sensory modalities"
+    ]
+  },
+  {
+    "question": "How could a timing difference between the two sides of the brain create a feeling of prior experience?",
+    "kind": "paraphrase",
+    "doc": "DejaVu1.pdf",
+    "evidence": [
+      "one hemisphere receives signals earlier"
+    ]
+  },
+  {
+    "question": "Why would a whole crowd remember the same wrong detail of a famous logo?",
+    "kind": "paraphrase",
+    "doc": "DejaVu3.pdf",
+    "evidence": [
+      "orphaned topological cache pointers"
+    ]
+  },
+  {
+    "question": "Which brain signals clash according to the recognition-memory account this paper cites?",
+    "kind": "paraphrase",
+    "doc": "DejaVu3.pdf",
+    "evidence": [
+      "perirhinal"
+    ]
+  },
+  {
+    "question": "How does the paper say two nearly equal future outcomes lead to leftover memories?",
+    "kind": "paraphrase",
+    "doc": "DejaVu3.pdf",
+    "evidence": [
+      "orphaned branch"
+    ]
+  }
+]

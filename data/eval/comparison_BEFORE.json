@@ -1,0 +1,134 @@
+{
+  "k": 5,
+  "modes": {
+    "dense-only": {
+      "all": {
+        "n": 20,
+        "hit": 0.6,
+        "mrr": 0.471
+      },
+      "exact": {
+        "n": 10,
+        "hit": 0.7,
+        "mrr": 0.583
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.5,
+        "mrr": 0.358
+      }
+    },
+    "bm25-only": {
+      "all": {
+        "n": 20,
+        "hit": 0.75,
+        "mrr": 0.667
+      },
+      "exact": {
+        "n": 10,
+        "hit": 1.0,
+        "mrr": 0.95
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.5,
+        "mrr": 0.383
+      }
+    },
+    "hybrid (RRF)": {
+      "all": {
+        "n": 20,
+        "hit": 0.7,
+        "mrr": 0.625
+      },
+      "exact": {
+        "n": 10,
+        "hit": 1.0,
+        "mrr": 0.9
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.4,
+        "mrr": 0.35
+      }
+    },
+    "hybrid + rerank": {
+      "all": {
+        "n": 20,
+        "hit": 0.75,
+        "mrr": 0.66
+      },
+      "exact": {
+        "n": 10,
+        "hit": 1.0,
+        "mrr": 0.95
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.5,
+        "mrr": 0.37
+      }
+    },
+    "hybrid + rerank + floor": {
+      "all": {
+        "n": 20,
+        "hit": 0.7,
+        "mrr": 0.65
+      },
+      "exact": {
+        "n": 10,
+        "hit": 1.0,
+        "mrr": 0.95
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.4,
+        "mrr": 0.35
+      }
+    }
+  },
+  "unreachable": [],
+  "misses": {
+    "dense-only": [
+      "What does 89% more often refer to? (expected DejaVu2.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf'])",
+      "Who are Golchin and Surdeanu? (expected DejaVu2.pdf, got ['DejaVu1.pdf'])",
+      "What did Zaika (2023) demonstrate? (expected DejaVu1.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
+      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu2.pdf', 'DejaVu3.pdf'])",
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+    ],
+    "bm25-only": [
+      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
+      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "How can wrongly rebuilt memories explain the sense of famili (expected DejaVu1.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+    ],
+    "hybrid (RRF)": [
+      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
+      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "How can wrongly rebuilt memories explain the sense of famili (expected DejaVu1.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])"
+    ],
+    "hybrid + rerank": [
+      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
+      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu2.pdf', 'DejaVu3.pdf'])",
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
+      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+    ],
+    "hybrid + rerank + floor": [
+      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
+      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "How can wrongly rebuilt memories explain the sense of famili (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
+      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu3.pdf'])",
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu3.pdf'])",
+      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf'])"
+    ]
+  },
+  "weak_chunk_rate": 0.67
+}
