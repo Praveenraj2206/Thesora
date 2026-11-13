@@ -130,6 +130,11 @@ ASK_MAX_TOKENS = _env_int("ASK_MAX_TOKENS", 900)
 SYNTH_MAX_TOKENS = _env_int("SYNTH_MAX_TOKENS", 1600)
 JUDGE_MAX_TOKENS = 20
 
+# --------------------------------------------------------------------------- question refiner (prompt-master)
+REFINE_MAX_TOKENS = _env_int("REFINE_MAX_TOKENS", 200)
+REFINE_MAX_WORDS = _env_int("REFINE_MAX_WORDS", 60)  # instruction given to the model
+REFINE_WORD_SLACK = 20  # replies up to this many words over the instruction are kept whole
+
 # --------------------------------------------------------------------------- synthesis
 SYNTH_CHUNKS_PER_DOC = _env_int("SYNTH_CHUNKS_PER_DOC", 3)
 SYNTH_MAX_CHUNKS = _env_int("SYNTH_MAX_CHUNKS", 24)
@@ -144,6 +149,9 @@ UI_REQUEST_TIMEOUT_S = _env_int("UI_REQUEST_TIMEOUT_S", 900)
 UI_HEALTH_TIMEOUT_S = _env_int("UI_HEALTH_TIMEOUT_S", 5)
 UI_SNIPPET_CHARS = 700
 UI_PROGRESS_POLL_S = 1.0
+UI_CONFIDENCE_HIGH = _env_float("UI_CONFIDENCE_HIGH", 0.7)  # confidence meter turns green at/above this
+UI_CONFIDENCE_MEDIUM = _env_float("UI_CONFIDENCE_MEDIUM", 0.4)  # amber at/above this, red below
+UI_DEFAULT_THEME = _env_str("UI_DEFAULT_THEME", "light")  # "light" or "dark"
 
 # --------------------------------------------------------------------------- evaluation
 FAITHFULNESS_MAX_SCORE = 5.0

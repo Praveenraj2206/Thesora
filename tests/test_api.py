@@ -65,6 +65,8 @@ class EchoLLM(BaseLLM):
 
     def generate(self, system_prompt, user_prompt, max_tokens=0):
         self.calls += 1
+        if "prompt engineer" in system_prompt:  # the optional question refiner
+            return '{"refined": "Which brain regions are involved in deja vu?", "why": "Named the target."}'
         body = user_prompt.split("\n", 2)[2]  # skip "Context passages:" + first header line
         first = body.split("\n", 1)[1].split("\n\n[2]")[0]
         return " ".join(first.split()[:20]) + " [1]."
@@ -159,6 +161,18 @@ class SessionApiTests(unittest.TestCase):
         broken = self.client.post(f"/sessions/{session}/ask", content=b"{oops",
                                   headers={"content-type": "application/json"})
         self.assertIn("not valid JSON", broken.json()["detail"])
+
+    def test_refine_suggests_a_sharper_question(self):
+        session = self.new_session()
+        response = self.client.post(f"/sessions/{session}/refine", json={"text": "brain deja vu", "mode": "ask"})
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["original"], "brain deja vu")
+        self.assertTrue(body["refined"].endswith("?"))
+        self.assertTrue(body["changed"])
+        bad = self.client.post(f"/sessions/{session}/refine", json={"text": "brain deja vu", "mode": "poem"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("Unknown mode", bad.json()["detail"])
 
     def test_upload_with_no_files_is_rejected(self):
         session = self.new_session()

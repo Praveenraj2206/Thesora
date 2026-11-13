@@ -16,7 +16,7 @@ Feature checks
   F5 Evaluation         scripts/evaluate.py runs and writes valid results.json.
   API                   /health, sessions, upload limit (max 10 per request),
                         chat isolation (a new chat sees no old PDFs),
-                        /ask (abstain + real answer) and /synthesize.
+                        /ask (abstain + real answer), /synthesize and /refine.
 
 F3/F4 use a stub LLM, so they prove the pipeline logic even if Ollama is down.
 Exit code is 1 if any check FAILs (SKIP and INFO never fail the run).
@@ -310,6 +310,18 @@ def api_checks(api: str, query: str, timeout: int, docs: Path) -> list[Result]:
         results.append(Result("API", "POST /synthesize table + gaps", status,
                               f"abstained={data.get('abstained')}, table={has_table}, gaps_section={has_gaps}, "
                               f"papers in sources={papers}"))
+
+    rough = "brain parts deja vu"
+    ref = requests.post(f"{base}/refine", json={"text": rough, "mode": "ask"}, timeout=timeout)
+    if ref.status_code == HTTP_UNAVAILABLE:
+        results.append(Result("API", "POST /refine", SKIP, f"HTTP 503 clean error: {ref.json().get('detail')}"))
+    elif not ref.ok:
+        results.append(Result("API", "POST /refine", FAIL, f"HTTP {ref.status_code}: {ref.text[:200]}"))
+    else:
+        data = ref.json()
+        refined = data.get("refined", "")
+        status = PASS if refined and refined.casefold() != rough and data.get("original") == rough else FAIL
+        results.append(Result("API", "POST /refine sharper question", status, f"{rough!r} -> {refined[:80]!r}"))
 
     requests.delete(base, timeout=10)
     gone = requests.get(f"{base}/documents", timeout=10)

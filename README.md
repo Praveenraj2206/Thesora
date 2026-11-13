@@ -25,6 +25,8 @@ Thesora adds five improvements and two extras to fix this:
 | F5 | **Evaluation harness** | Measures faithfulness, context precision/recall, answer relevancy, abstention accuracy and retrieval hit rate, and writes `results.json` | `scripts/evaluate.py` |
 | ★ | **Cross-paper synthesis** | Builds a comparison table with one row per paper, plus a "Research Gaps" section | `POST /sessions/{id}/synthesize` |
 | ★ | **Isolated chats + upload limit** | Every chat starts empty and only sees its own PDFs; at most 10 PDFs per upload | `app/pipelines/sessions.py`, `app/api/main.py` |
+| ★ | **Prompt refiner (optional)** | One click rewrites a rough question ("brain parts deja vu") into a precise one that retrieves better; you choose whether to send it. Adapted from [prompt-master](https://github.com/nidhinjs/prompt-master) | `app/generation/prompt_refiner.py`, `POST /sessions/{id}/refine` |
+| ★ | **Research-grade interface** | A calm "paper" light theme with a one-click dark theme, citation badges, source cards with the exact passage, and a confidence meter | `ui/streamlit_app.py`, `ui/styles.py` |
 
 **Pipeline:** PDF → PyMuPDF text + section detection → chunks (512 characters, 100 overlap) →
 all-MiniLM-L6-v2 embeddings → FAISS + BM25 → RRF fusion → cross-encoder rerank → Ollama →
@@ -120,7 +122,7 @@ time the backend starts. After that, `export THESORA_OFFLINE=1` makes it use onl
 python -m unittest discover -s tests -v
 ```
 
-Expected: `Ran 36 tests ... OK`. These tests need neither Ollama nor any model downloads.
+Expected: `Ran 46 tests ... OK`. These tests need neither Ollama nor any model downloads.
 
 </details>
 
@@ -149,7 +151,7 @@ streamlit run ui/streamlit_app.py
 ```
 Your browser opens at **http://localhost:8501**.
 
-Optional full backend check (in terminal 2, while the backend runs). Expected: `PASS=16 FAIL=0`:
+Optional full backend check (in terminal 2, while the backend runs). Expected: `PASS=17 FAIL=0`:
 ```bash
 python scripts/verify_backend.py
 ```
@@ -165,19 +167,41 @@ python scripts/verify_backend.py
 
 <br>
 
-1. In the left sidebar, check for the green **"Ollama ready (qwen3:4b-instruct)"** box.
-2. Under **Upload PDFs**, click **Browse files** and choose up to 10 PDFs, then click **Ingest**.
-   Each paper shows how many chunks were indexed, and it appears under **Documents in this chat**.
-3. Keep **Mode** on **Ask a question**, type your question in the box at the bottom and press Enter.
-4. Read the answer:
-   - The `[1]`, `[2]` numbers are citations.
-   - The **Confidence** bar shows how sure Thesora is.
-   - Each source row shows the paper, page and section, with **✅ verified** or **⚠️ unverified**.
-     Click a row to see the exact passage and its relevance score.
-   - A yellow **Abstained** banner means the papers don't contain the answer.
-5. To compare papers, switch **Mode** to **Compare papers (synthesis)** and type a topic, for example
+1. In the left sidebar, check for the green **"Ready · qwen3:4b-instruct"** badge.
+2. Under **Library**, click **Upload** (or drag PDFs onto the box) and choose up to 10 PDFs, then click
+   **Ingest papers**. Each paper then appears under **In this chat** with its pages and passages.
+3. Keep **Ask a question** selected, type your question in the box at the bottom and press Enter.
+4. Read the answer card:
+   - The small numbered badges are citations. An amber badge means that claim could not be verified.
+   - The **Confidence** meter is green (high), amber (medium) or red (low).
+   - Each source card shows the paper, page and section, with **✓ Verified** or **! Unverified**, and a
+     relevance bar. Click a card to read the exact passage.
+   - A **"Not answered from your papers"** notice means the papers don't contain the answer.
+5. To compare papers, select **Compare papers** and type a topic, for example
    `memory errors and false familiarity`. You get one table row per paper and a **Research Gaps** section.
-6. Click **➕ New chat** to start over with no documents. Refreshing the page does the same.
+6. Click **＋ New chat** to start over with no documents. Refreshing the page does the same.
+
+</details>
+
+<details>
+<summary><b>Prompt refiner and dark theme</b></summary>
+
+<br>
+
+**Prompt refiner (optional).** Turn on **✨ Prompt refiner** above the conversation. Type a rough
+question, for example `brain parts deja vu`, and press **✨ Refine**. Thesora suggests a precise version,
+such as *"Which brain regions are associated with the phenomenon of deja vu according to the papers?"*,
+with a one-line reason. Then choose:
+
+- **Use suggestion** sends the refined question.
+- **Edit it** puts the suggestion in the box so you can change it first.
+- **Send my original** sends your text unchanged.
+
+In **Compare papers** mode it refines a comparison topic instead of a question. It never answers the
+question itself and never sends anything without your click. It takes about 5–10 seconds on a CPU.
+
+**Dark theme.** Use the **🌙 Dark** switch at the top right. The choice is saved in the page address
+(`?theme=dark`), so it survives a refresh. To make dark the default, set `UI_DEFAULT_THEME=dark`.
 
 </details>
 
@@ -202,6 +226,7 @@ Upload the three papers in `data/papers/` (DejaVu1, DejaVu2, DejaVu3), then ask:
 | Synthesis | (Compare mode) `memory errors and false familiarity` | A table row for each paper + Research Gaps |
 | New chat | Click **New chat**, then ask `What is deja vu?` | Abstains: no documents loaded in this chat |
 | Upload limit | Select 11 PDFs | Blocked: "at most 10 per upload" |
+| Prompt refiner | Turn on **✨ Prompt refiner**, type `brain parts deja vu`, press **✨ Refine** | A precise question about brain regions and deja vu; **Use suggestion** answers it from DejaVu1 |
 
 If a longer answer shows **⚠️ unverified** on a citation, that's F3 working: the model reworded or combined
 claims more than the cited passage directly supports, and Thesora flags it rather than hiding it.
@@ -281,6 +306,7 @@ often lead to unsupported claims, at a small cost in recall on reworded question
 | `GET /sessions/{id}/documents` | Documents in that chat |
 | `POST /sessions/{id}/ask` `{"question"}` | Answer, sources (`cited`, `verified`, `match_score`), `confidence`, `abstained` |
 | `POST /sessions/{id}/synthesize` `{"topic"}` | Comparison table + research gaps across that chat's papers |
+| `POST /sessions/{id}/refine` `{"text", "mode"}` | Optional: a sharper question (`mode: "ask"`) or comparison topic (`"compare"`), with a one-line reason |
 
 Errors are JSON `{"detail": "..."}` with a friendly, actionable message: 400 bad input or too many files,
 404 chat ended, 413 file too large, 422 unreadable PDF, 502 bad LLM reply, 503 Ollama down or model
@@ -304,7 +330,8 @@ export ABSTAIN_THRESHOLD=0.35
 ```
 
 Other common ones: `RELEVANCE_FLOOR`, `MAX_FILES_PER_REQUEST`, `MAX_UPLOAD_MB`, `SESSION_TTL_MIN`,
-`API_URL` (where the UI finds the backend), `THESORA_OFFLINE`.
+`THESORA_API_URL` (where the UI finds the backend), `THESORA_OFFLINE`, `UI_DEFAULT_THEME` (`light` or
+`dark`), `REFINE_MAX_WORDS`.
 
 </details>
 
@@ -321,6 +348,7 @@ app/
   embeddings/embedder.py   MiniLM embeddings (normalised vectors)
   generation/llm.py        BaseLLM, Ollama client, prompts
   generation/verifier.py   F3 citation verification
+  generation/prompt_refiner.py  optional question refiner (adapted from prompt-master)
   ingestion/               PDF loading (sections) + chunking
   pipelines/rag.py         ask / synthesize, F4 abstention + confidence
   pipelines/sessions.py    isolated per-chat indexes, expiry
@@ -329,8 +357,10 @@ app/
 data/papers/               sample papers (DejaVu1–3)
 data/eval/                 question sets + script results
 scripts/                   evaluate.py, compare_retrievers.py, verify_backend.py
-tests/                     test_core.py (pipeline), test_api.py (sessions, upload limit, errors)
+tests/                     test_core.py (pipeline), test_api.py (sessions, upload limit, errors),
+                           test_refiner.py (prompt refiner)
 ui/streamlit_app.py        Streamlit chat interface
+ui/styles.py               light and dark themes (all colours and CSS)
 ```
 
 </details>
@@ -364,3 +394,10 @@ ui/streamlit_app.py        Streamlit chat interface
 - Scanned PDFs (no text layer) are rejected; OCR isn't included.
 - Chats live in the backend's memory, so restarting the backend ends every chat (by design).
 - Very broad questions ("summarize every paper") may abstain in question mode; use **Compare papers** instead.
+
+---
+
+## Acknowledgements
+
+- The prompt refiner adapts the rules of [prompt-master](https://github.com/nidhinjs/prompt-master)
+  by Nidhin Joseph Nelson (MIT License), shortened for a small local model and for research questions.

@@ -13,6 +13,7 @@ Endpoints
   GET    /sessions/{session_id}/documents     documents in that chat
   POST   /sessions/{session_id}/ask           {"question"} -> grounded, verified answer
   POST   /sessions/{session_id}/synthesize    {"topic"}    -> comparison table + research gaps
+  POST   /sessions/{session_id}/refine        {"text", "mode"} -> sharper question/topic (optional helper)
 
 Errors follow INT-2: a JSON ``{"detail": "<friendly, actionable message>"}`` with
 400 (bad input), 404 (unknown/expired chat), 413 (file too large), 422 (PDF
@@ -44,6 +45,7 @@ from app.core.errors import (
     ThesoraError,
     UploadError,
 )
+from app.generation.prompt_refiner import MODE_ASK, MODES, refine_prompt
 from app.pipelines.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -114,6 +116,13 @@ class SynthesizeRequest(BaseModel):
     """Body of POST /sessions/{id}/synthesize."""
 
     topic: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
+
+
+class RefineRequest(BaseModel):
+    """Body of POST /sessions/{id}/refine."""
+
+    text: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
+    mode: str = MODE_ASK
 
 
 # ----------------------------------------------------------------------------- error mapping
@@ -322,3 +331,16 @@ def ask(session_id: str, request: AskRequest) -> dict[str, Any]:
 def synthesize(session_id: str, request: SynthesizeRequest) -> dict[str, Any]:
     """Cross-paper comparison table plus research gaps over this chat's PDFs."""
     return get_manager().get(session_id).assistant.synthesize(request.topic).to_dict()
+
+
+@app.post("/sessions/{session_id}/refine")
+def refine(session_id: str, request: RefineRequest) -> dict[str, Any]:
+    """Optional helper: rewrite a rough question (mode ``ask``) or topic (mode ``compare``) into a sharper one.
+
+    It never answers the question; the user chooses whether to send the suggestion.
+    """
+    if request.mode not in MODES:
+        raise ValueError(f"Unknown mode '{request.mode}'. Use one of: {', '.join(MODES)}.")
+    manager = get_manager()
+    documents = [doc["doc_id"] for doc in manager.get(session_id).assistant.documents()]
+    return refine_prompt(manager.llm, request.text, request.mode, documents).to_dict()
