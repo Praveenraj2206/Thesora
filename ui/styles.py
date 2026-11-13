@@ -72,7 +72,16 @@ _BASE_CSS = """
 [data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stBottom"] > div,
 [data-testid="stBottomBlockContainer"] { background: var(--bg); }
 [data-testid="stHeader"] { background: transparent; }
-[data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none; }
+/* Hide Streamlit's menu, deploy button and status widget, but NOT the toolbar itself: the button
+   that re-opens a collapsed sidebar (stExpandSidebarButton) lives inside it. */
+[data-testid="stDecoration"], [data-testid="stStatusWidget"], [data-testid="stToolbarActions"],
+[data-testid="stMainMenu"], [data-testid="stAppDeployButton"] { display: none; }
+[data-testid="stToolbar"] { background: transparent; }
+[data-testid="stExpandSidebarButton"] {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+}
+[data-testid="stExpandSidebarButton"]:hover { border-color: var(--accent); }
+[data-testid="stExpandSidebarButton"] svg { color: var(--accent) !important; }
 .block-container { max-width: 980px; padding-top: 2.2rem; padding-bottom: 7rem; }
 
 /* typography */
@@ -94,7 +103,7 @@ hr { border-color: var(--border) !important; }
 [data-testid="stSidebarContent"] { padding-top: 0; }
 [data-testid="stSidebarHeader"] { height: 2.2rem; padding-top: .6rem; }
 [data-testid="stBottomBlockContainer"] { max-width: 980px; }
-[data-testid="stSidebarCollapseButton"] svg, [data-testid="stExpandSidebarButton"] svg { color: var(--muted); }
+[data-testid="stSidebarCollapseButton"] svg { color: var(--muted); }
 
 /* buttons */
 .stButton > button, .stDownloadButton > button, [data-testid="stPopover"] button {
