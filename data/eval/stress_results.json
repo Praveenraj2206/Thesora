@@ -1,0 +1,33 @@
+{
+  "no_llm": true,
+  "nli": false,
+  "groups": {
+    "noisy": {
+      "cases": 5,
+      "abstention_rate": 0.0,
+      "citation_recall": null,
+      "citation_precision": null,
+      "distractor_cited_rate": null,
+      "counterfactual_followed_rate": null,
+      "distractor_ranked_first_rate": 0.0
+    },
+    "ssli": {
+      "cases": 5,
+      "abstention_rate": 0.0,
+      "citation_recall": null,
+      "citation_precision": null,
+      "distractor_cited_rate": null,
+      "counterfactual_followed_rate": null,
+      "distractor_ranked_first_rate": 0.0
+    },
+    "counterfactual": {
+      "cases": 5,
+      "abstention_rate": 0.0,
+      "citation_recall": null,
+      "citation_precision": null,
+      "distractor_cited_rate": null,
+      "counterfactual_followed_rate": null,
+      "distractor_ranked_first_rate": null
+    }
+  }
+}

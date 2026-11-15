@@ -458,3 +458,9 @@ def post_explain(session_id: str, request: ExplainRequest) -> dict[str, Any]:
 def get_glossary(session_id: str) -> dict[str, Any]:
     """Abbreviations found in this chat's papers, with long form and page."""
     return {"glossary": get_manager().get(session_id).assistant.glossary}
+
+
+@app.post("/sessions/{session_id}/agree")
+def post_agree(session_id: str, request: SynthesizeRequest) -> dict[str, Any]:
+    """N12: do the papers agree on a topic? Extractive positions per paper plus conflicts by severity (1-3)."""
+    return get_manager().get(session_id).assistant.agree(request.topic)

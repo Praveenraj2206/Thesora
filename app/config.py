@@ -186,3 +186,15 @@ EXPLAIN_MAX_SELECTION_CHARS = _env_int("EXPLAIN_MAX_SELECTION_CHARS", 1500)
 GLOSSARY_ENABLED = _env_str("GLOSSARY_ENABLED", "1") == "1"
 GLOSSARY_MAX_TERMS = _env_int("GLOSSARY_MAX_TERMS", 200)
 PDF_PANEL_MODE = _env_str("PDF_PANEL_MODE", "viewer")  # "viewer" (pdf.js) or "image" (PNG page; always fits narrow panels)
+
+# --------------------------------------------------------------------------- v2 N1 / N2 / N12
+PDF_LAYOUT_MODE = _env_str("PDF_LAYOUT_MODE", "auto")  # "auto": add table chunks; "plain": text only (old behaviour)
+TABLE_MIN_ROWS = _env_int("TABLE_MIN_ROWS", 2)
+COLUMN_GAP_RATIO = _env_float("COLUMN_GAP_RATIO", 0.15)  # check_extraction.py: share of blocks on each side = two columns
+CONTEXT_HEADERS = _env_str("CONTEXT_HEADERS", "0") == "1"  # N2a (default set from compare_retrievers results)
+MULTI_QUERY = _env_str("MULTI_QUERY", "0") == "1"  # N2b: off by default (one extra LLM call)
+MULTI_QUERY_VARIANTS = _env_int("MULTI_QUERY_VARIANTS", 2)
+MULTI_QUERY_MAX_TOKENS = _env_int("MULTI_QUERY_MAX_TOKENS", 60)
+CONTEXT_EXPANSION = _env_str("CONTEXT_EXPANSION", "0") == "1"  # N2c: give the LLM the passage plus its neighbours
+CHUNK_PARENT_CHARS = _env_int("CHUNK_PARENT_CHARS", 1200)
+AGREE_NUMBER_WINDOW = _env_int("AGREE_NUMBER_WINDOW", 6)  # words around a number that name its metric

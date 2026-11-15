@@ -30,6 +30,8 @@ class DocumentChunk:
     section: str
     text: str
     chunk_index: int
+    chunk_type: str = "text"  # N1: "text" or "table" (markdown rows)
+    search_text: str = ""  # N2a: text used for embedding + BM25 (with "Title › Section" header); display uses text
 
 
 @dataclass

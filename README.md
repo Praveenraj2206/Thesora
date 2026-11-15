@@ -122,7 +122,7 @@ time the backend starts. After that, `export THESORA_OFFLINE=1` makes it use onl
 python -m unittest discover -s tests -v
 ```
 
-Expected: `Ran 46 tests ... OK`. These tests need neither Ollama nor any model downloads.
+Expected: `Ran 68 tests ... OK`. These tests need neither Ollama nor any model downloads.
 
 </details>
 
@@ -394,6 +394,57 @@ ui/styles.py               light and dark themes (all colours and CSS)
 - Scanned PDFs (no text layer) are rejected; OCR isn't included.
 - Chats live in the backend's memory, so restarting the backend ends every chat (by design).
 - Very broad questions ("summarize every paper") may abstain in question mode; use **Compare papers** instead.
+
+---
+
+## Thesora v2 additions
+
+| # | Feature | Status | How to use / setting |
+|---|---|---|---|
+| N1 | Tables become citable chunks (`chunk_type="table"`); two-column check | ✅ (column order already correct, unchanged) | `PDF_LAYOUT_MODE=auto\|plain`; `python scripts/check_extraction.py` |
+| N2a | Contextual headers ("Title › Section") for search | ⚠️ off: made hybrid search worse | `CONTEXT_HEADERS=1` |
+| N2b | Multi-query (2 reworded variants, merged) | ⚠️ off by default (extra LLM call) | `MULTI_QUERY=1` |
+| N2c | Context expansion (passage + neighbours) | ⚠️ off by default (not measured with the LLM) | `CONTEXT_EXPANSION=1`, `CHUNK_PARENT_CHARS` |
+| N3 | Comparison-table cells verified | ✅ | "Table check" under Compare answers |
+| N4 | Citations ("Smith et al., 2023 · p.4"), BibTeX, notes export | ✅ (edit form: API only) | Sidebar download buttons; `PATCH .../metadata` |
+| N5 | Per-sentence status + silent papers | ✅ | "Sentence check" under answers |
+| N6 | Partial answers for multi-part questions | ✅ | `PARTIAL_ANSWERS=1` |
+| N7 | 100 MB files, large-file warning, 400 MB per chat | ✅ | `MAX_UPLOAD_MB`, `LARGE_FILE_WARN_MB`, `MAX_SESSION_PDF_MB` |
+| N8 | Meaning check (NLI) | ⚠️ built, off: smallest model is 283 MB (> 200 MB budget) | `NLI_ENABLED=1` (downloads `cross-encoder/nli-deberta-v3-xsmall`) |
+| N9 | PDF side panel with the passage highlighted | ✅ (viewer clips slightly in narrow panels) | 📄 buttons under answers; `PDF_PANEL_MODE=image` |
+| N10 | Self-repair: one stricter retry, unsupported sentences removed | ✅ | `SELF_REPAIR=1` |
+| N11 | Explain (What/Why/How/Example, "not evidence") + glossary | ✅ (text box, not mouse selection) | 💡 Explain; sidebar Glossary |
+| N12 | "Agree?" mode: quoted positions, conflicts by severity | ✅ (numbers only while NLI is off) | Mode "Agree?" |
+| N13 | Stress test (noisy, look-alike, altered numbers) | ✅ | `python scripts/stress_eval.py [--limit N] [--no-llm]` |
+
+New endpoints (all additive): `GET /sessions/{id}/metadata`, `PATCH /sessions/{id}/documents/{doc_id}/metadata`,
+`GET /sessions/{id}/bibtex`, `GET /sessions/{id}/export`, `GET /sessions/{id}/documents/{doc_id}/pdf`,
+`GET /sessions/{id}/documents/{doc_id}/page/{n}.png`, `POST /sessions/{id}/highlight`, `POST /sessions/{id}/explain`,
+`GET /sessions/{id}/glossary`, `POST /sessions/{id}/agree`. `/ask` adds `sentences`, `silent_papers`, `repair`, `parts`,
+`answer_id`, `nli_available`; `/synthesize` adds `table_cells`; sources add `label` and `meaning`.
+
+**N2 retrieval comparison** (20 questions, `compare_retrievers.py`, hit rate / MRR):
+
+| Mode | v1 | v2 (tables) | v2 + contextual headers |
+|---|---|---|---|
+| Dense only | 0.65 / 0.43 | 0.65 / 0.43 | 0.70 / 0.54 |
+| Hybrid (RRF) | 0.75 / 0.64 | 0.80 / 0.65 | 0.70 / 0.60 |
+| Hybrid + rerank + floor (Thesora) | 0.70 / 0.65 | 0.70 / 0.65 | 0.70 / 0.65 |
+
+**N13 stress test** (`stress_eval.py --limit 3`, qwen3:4b-instruct, NLI off):
+
+| Group | Citation recall | Citation precision | Distractor cited | Altered numbers repeated | Distractor ranked first |
+|---|---|---|---|---|---|
+| Noisy | 0.75 | 1.00 | 0.00 | – | 0.00 |
+| Look-alike (SSLI) | 0.67 | 0.50 | 0.33 | – | 0.00 |
+| Counterfactual | 0.86 | 0.83 | – | 0.67 | – |
+
+Repeating altered numbers means the model follows the passage it is given; Thesora cannot detect a passage that is
+itself wrong.
+
+**Licences and credits (v2):** PyMuPDF / PyMuPDF4LLM (AGPL-3.0), streamlit-pdf-viewer, unv-scispacy-abbr from scispaCy
+(Apache-2.0), spaCy (MIT); ideas only from PaperQA2 (Apache-2.0, contradiction severity), ALCE (MIT, citation
+recall/precision) and RAG_Techniques (contextual chunk headers; no code copied).
 
 ---
 

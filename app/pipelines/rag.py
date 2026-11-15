@@ -78,6 +78,9 @@ def compute_confidence(relevances: Sequence[float], verified_ratio: float, cover
 
 
 import uuid  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from app.ingestion.layout import table_chunks  # noqa: E402  (v2 N1)
 
 from app.generation.viewer import (  # noqa: E402  (v2 N9 / N11)
     EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits,
@@ -154,7 +157,14 @@ class ResearchAssistant:
         chunks = self._chunker.chunk_pages(pages)
         if not chunks:
             raise PDFLoadError(f"{pdf_path.name} produced no usable text chunks.")
-        embeddings = self.embedder.embed([c.text for c in chunks])
+        sections: dict[int, str] = {}
+        for c in chunks:
+            sections.setdefault(c.page_number, c.section)
+        chunks += table_chunks(pdf_path, name, len(chunks), sections)  # N1
+        title = (self.metadata.get(name) or {}).get("title") or name
+        for c in chunks:  # N2a: search text carries "Title › Section"; display/citation keep the original text
+            c.search_text = f"{title} › {c.section}\n{c.text}" if config.CONTEXT_HEADERS else ""
+        embeddings = self.embedder.embed([c.search_text or c.text for c in chunks])
         with self._ingest_lock:
             if self.store.has_document(name):  # lost a race with a concurrent upload
                 return {"document": name, "status": "skipped", "pages": 0, "chunks_added": 0}
@@ -216,6 +226,51 @@ class ResearchAssistant:
         )
         self.history.append(answer.to_dict())
         return answer
+
+    def _context_text(self, chunk) -> str:
+        """N2c: the passage plus its neighbours in the same section, up to CHUNK_PARENT_CHARS (verification uses this too)."""
+        if not config.CONTEXT_EXPANSION:
+            return chunk.text
+        same = [c for c in getattr(self.store, "_chunks", []) if c.doc_id == chunk.doc_id and c.section == chunk.section
+                and c.chunk_type == "text" and abs(c.chunk_index - chunk.chunk_index) <= 1]
+        joined = " ".join(c.text for c in sorted(same, key=lambda c: c.chunk_index)) or chunk.text
+        return joined[: config.CHUNK_PARENT_CHARS] if chunk.text in joined[: config.CHUNK_PARENT_CHARS] else chunk.text
+
+    def _multi_query(self, question: str, chunks: list) -> list:
+        """N2b: up to 2 reworded variants from one short LLM call; merged by best relevance. Silent on failure."""
+        try:
+            reply = self.llm.generate(
+                "Rewrite the question in 2 different ways using other words. One per line. No numbering, no answers.",
+                question, config.MULTI_QUERY_MAX_TOKENS)
+        except Exception:
+            return chunks
+        merged = {c.chunk.chunk_id: c for c in chunks}
+        for variant in [v.strip(" -•0123456789.") for v in reply.splitlines() if len(v.split()) >= 3][: config.MULTI_QUERY_VARIANTS]:
+            for c in self.retriever.retrieve(variant):
+                if c.chunk.chunk_id not in merged or c.relevance > merged[c.chunk.chunk_id].relevance:
+                    merged[c.chunk.chunk_id] = c
+        return sorted(merged.values(), key=lambda c: c.relevance, reverse=True)[: config.FINAL_TOP_K]
+
+    def agree(self, topic: str) -> dict[str, Any]:
+        """N12: each paper's best passage on the topic, an extractive position, and graded conflicts."""
+        from app.generation.agree import compare, position
+
+        topic = topic.strip()
+        if not topic:
+            raise ValueError("Topic must not be empty.")
+        if len(self.store) == 0:
+            return {"topic": topic, "rows": [], "conflicts": [], "nli_available": False, "message": config.NO_DOCUMENTS_MESSAGE}
+        best: dict[str, Any] = {}
+        for c in self.retriever.retrieve_across_documents(topic):
+            if c.chunk.doc_id not in best or c.relevance > best[c.chunk.doc_id].relevance:
+                best[c.chunk.doc_id] = c
+        rows = [{"doc_id": d, "label": short_label(self.metadata.get(d), c.chunk.page_number, c.chunk.section),
+                 "page": c.chunk.page_number, "section": c.chunk.section, "relevance": round(c.relevance, 3),
+                 "position": position(c.chunk.text, topic), "passage": c.chunk.text}
+                for d, c in best.items() if c.relevance >= config.RELEVANCE_FLOOR]
+        nli = self._nli()
+        return {"topic": topic, "rows": rows, "conflicts": compare(rows, nli), "nli_available": nli is not None,
+                "message": None if nli else "Meaning check is off: only number conflicts are detected."}
 
     def _remember(self, passages: list[str]) -> str:
         answer_id = uuid.uuid4().hex
@@ -283,15 +338,19 @@ class ResearchAssistant:
             return self._abstain(question, config.NO_DOCUMENTS_MESSAGE, [], 0.0, started, "ask")
         sparse = expand_query(question, self.glossary)
         chunks = self.retriever.retrieve(question, sparse_query=sparse) if sparse else self.retriever.retrieve(question)
+        if config.MULTI_QUERY:
+            chunks = self._multi_query(question, chunks)
         best = chunks[0].relevance if chunks else 0.0
         if not chunks or best < config.ABSTAIN_THRESHOLD:
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, best, started, "ask")
 
-        raw = self.llm.generate(SYSTEM_PROMPT, build_ask_prompt(question, chunks), config.ASK_MAX_TOKENS)
+        prompt_chunks = [replace(c, chunk=replace(c.chunk, text=self._context_text(c.chunk)))
+                         for c in chunks] if config.CONTEXT_EXPANSION else chunks
+        raw = self.llm.generate(SYSTEM_PROMPT, build_ask_prompt(question, prompt_chunks), config.ASK_MAX_TOKENS)
         if is_insufficient(raw):
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
 
-        texts = {n: item.chunk.text for n, item in enumerate(chunks, start=1)}
+        texts = {n: self._context_text(item.chunk) for n, item in enumerate(chunks, start=1)}
         nli = self._nli()
         verification: VerificationResult = verify_citations(raw, texts)
         report = sentence_report(raw, texts, nli)

@@ -43,7 +43,8 @@ HTTP_UNAVAILABLE = 503
 
 MODE_ASK_LABEL = "Ask a question"
 MODE_COMPARE_LABEL = "Compare papers"
-MODES = {MODE_ASK_LABEL: "ask", MODE_COMPARE_LABEL: "compare"}
+MODE_AGREE_LABEL = "Agree?"
+MODES = {MODE_ASK_LABEL: "ask", MODE_COMPARE_LABEL: "compare", MODE_AGREE_LABEL: "agree"}
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 Reply = tuple[Optional[Any], Optional[str], Optional[int]]
@@ -203,7 +204,7 @@ def card() -> Any:
 
 # ============================================================================ rendering
 def render_question(prompt: str, mode: str) -> None:
-    label = "Compare" if mode == "compare" else "Question"
+    label = {"compare": "Compare", "agree": "Agree?"}.get(mode, "Question")
     st.markdown(
         f'<div class="th-q"><div class="th-q-bubble"><span class="th-q-mode">{label}</span>{esc(prompt)}</div></div>',
         unsafe_allow_html=True,
@@ -376,8 +377,32 @@ def render_trust_extras(result: dict[str, Any]) -> None:
         st.caption("No evidence from: " + ", ".join(result["silent_papers"]) + " — silence is not disagreement.")
 
 
+def render_agree(data: dict[str, Any]) -> None:
+    """N12: Paper / Position / Passage table, conflict badges with both quotes (icon + text)."""
+    with card():
+        st.markdown('<span class="th-answer-label">Do the papers agree?</span>', unsafe_allow_html=True)
+        if data.get("message"):
+            st.caption(data["message"])
+        if not data.get("rows"):
+            st.markdown(notice("warn", "?", "No paper discusses this topic", config.ABSTAIN_MESSAGE), unsafe_allow_html=True)
+            return
+        st.markdown("| Paper | Position (quoted) | Passage |\n| --- | --- | --- |\n" + "\n".join(
+            f"| {r['label']} | {r['position'].replace('|', '/')} | p.{r['page']} {r['section']} |" for r in data["rows"]))
+        show_all = st.toggle("Show wording-only differences", key=_key())
+        shown = [c for c in data.get("conflicts", []) if show_all or c["severity"] > 1]
+        if not shown:
+            st.markdown("**✓ No conflicts found** between the papers' statements.")
+        for c in shown:
+            icon = {3: "⚠️ Contradiction", 2: "⚠️ Numbers differ", 1: "~ Wording differs"}[c["severity"]]
+            with st.expander(f"{icon} · {c['papers'][0]} vs {c['papers'][1]}"):
+                st.markdown(f"{esc(c['reason'])}\n\n> {esc(c['quotes'][0])}\n\n> {esc(c['quotes'][1])}")
+
+
 def render_turn(turn: dict[str, Any]) -> None:
     render_question(turn["prompt"], turn.get("mode", "ask"))
+    if turn.get("mode") == "agree" and not turn.get("error"):
+        render_agree(turn["data"])
+        return
     if turn.get("error"):
         with card():
             st.markdown(notice("bad", "×", "Something went wrong", turn["error"]), unsafe_allow_html=True)
@@ -555,7 +580,7 @@ def refiner_panel(mode: str) -> None:
             else:
                 data, err, status = call_api(
                     "POST", session_path("/refine"), label="Refining your question",
-                    json={"text": st.session_state.refine_text, "mode": mode},
+                    json={"text": st.session_state.refine_text, "mode": "compare" if mode == "agree" else mode},
                 )
                 if not handle_expired(status):
                     st.session_state.refine_result = data if not err else {"error": err}
@@ -597,6 +622,17 @@ def init_state() -> None:
 
 def run_prompt(prompt: str, mode: str) -> None:
     render_question(prompt, mode)
+    if mode == "agree":
+        data, err, status = call_api("POST", session_path("/agree"), label="Comparing positions", json={"topic": prompt})
+        if handle_expired(status):
+            st.rerun()
+        st.session_state.history.append({"prompt": prompt, "mode": mode, "error": err} if err else
+                                        {"prompt": prompt, "mode": mode, "data": data})
+        if err:
+            st.markdown(notice("bad", "×", "Something went wrong", err), unsafe_allow_html=True)
+        else:
+            render_agree(data)
+        return
     if mode == "compare":
         data, err, status = call_api("POST", session_path("/synthesize"), label="Comparing papers",
                                      json={"topic": prompt})
@@ -643,7 +679,8 @@ def main() -> None:
 
     # The chat box is pinned to the bottom wherever it is created; reading it first lets the welcome
     # cards disappear as soon as the first question is sent.
-    placeholder = "Ask a question about your papers…" if mode == "ask" else "Topic to compare across papers…"
+    placeholder = {"ask": "Ask a question about your papers…", "compare": "Topic to compare across papers…",
+                   "agree": "Topic to check: do the papers agree?"}[mode]
     prompt = st.chat_input(placeholder, disabled=not st.session_state.session_id)
     pending = st.session_state.pop("pending_prompt", None) or prompt
 

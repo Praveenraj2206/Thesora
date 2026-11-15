@@ -127,7 +127,7 @@ class HybridRetriever:
                 return None
             from rank_bm25 import BM25Okapi
 
-            corpus = [tokenize(chunk.text) or ["_"] for chunk in chunks]
+            corpus = [tokenize(chunk.search_text or chunk.text) or ["_"] for chunk in chunks]
             self._bm25 = BM25Okapi(corpus)
             self._bm25_version = self._store.version
             return self._bm25
