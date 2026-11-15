@@ -100,6 +100,7 @@ class Reranker:
 
 
 class HybridRetriever:
+    _sparse_query: Optional[str] = None
     """Dense + BM25 retrieval, RRF fusion and cross-encoder reranking over one store.
 
     If the cross-encoder cannot be loaded, the retriever degrades gracefully to
@@ -126,7 +127,7 @@ class HybridRetriever:
                 return None
             from rank_bm25 import BM25Okapi
 
-            corpus = [tokenize(chunk.text) or ["_"] for chunk in chunks]
+            corpus = [tokenize(chunk.search_text or chunk.text) or ["_"] for chunk in chunks]
             self._bm25 = BM25Okapi(corpus)
             self._bm25_version = self._store.version
             return self._bm25
@@ -157,7 +158,7 @@ class HybridRetriever:
     ) -> list[RetrievedChunk]:
         """Run dense + BM25 search and fuse with RRF into scored candidates."""
         dense = self.dense_search(query_vector, dense_k)
-        sparse = self.sparse_search(query, bm25_k)
+        sparse = self.sparse_search(self._sparse_query or query, bm25_k)
         dense_scores = dict(dense)
         sparse_scores = dict(sparse)
         fused = reciprocal_rank_fusion([[i for i, _ in dense], [i for i, _ in sparse]], top_k=fused_k)
@@ -208,6 +209,7 @@ class HybridRetriever:
         fused_k: int = config.FUSED_TOP_K,
         final_k: int = config.FINAL_TOP_K,
         min_relevance: Optional[float] = None,
+        sparse_query: Optional[str] = None,
     ) -> list[RetrievedChunk]:
         """Hybrid retrieve + rerank. Returns up to ``final_k`` chunks, best first.
 
@@ -217,7 +219,11 @@ class HybridRetriever:
         if len(self._store) == 0 or not query.strip():
             return []
         query_vector = self._embedder.embed_query(query)
-        candidates = self._candidates(query, query_vector, dense_k, bm25_k, fused_k)
+        self._sparse_query = sparse_query  # N11: glossary long forms added to the BM25 query only
+        try:
+            candidates = self._candidates(query, query_vector, dense_k, bm25_k, fused_k)
+        finally:
+            self._sparse_query = None
         scored = self._score(query, candidates)
         scored.sort(key=lambda c: c.relevance, reverse=True)
         floor = config.RELEVANCE_FLOOR if min_relevance is None else min_relevance

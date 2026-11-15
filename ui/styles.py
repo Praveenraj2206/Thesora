@@ -327,6 +327,20 @@ details.th-src[open] .th-chev { transform: rotate(90deg); }
 .th-refine-text { font-family: 'Source Serif 4', Georgia, serif; font-size: 1.08rem; color: var(--text); margin: .35rem 0 .3rem; line-height: 1.45; }
 .th-refine-why { color: var(--muted); font-size: .84rem; }
 .th-footer { color: var(--faint); font-size: .74rem; margin-top: 1.4rem; line-height: 1.5; }
+
+/* v2 compact layout: pinned mode bar, sticky side panel, small source dropdowns */
+.st-key-th_modebar { background: var(--bg); padding: .45rem 0 .35rem; border-bottom: 1px solid var(--border); }
+[data-testid="stLayoutWrapper"]:has(> .st-key-th_modebar) { position: sticky; top: 0; z-index: 60; background: var(--bg); }
+.th-chip { display: inline-block; font-size: .82rem; padding: .2rem .6rem; margin: .1rem .3rem .3rem 0;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text); }
+[data-testid="stExpander"] details { border: 1px solid var(--border) !important; border-radius: 12px !important;
+  background: var(--surface-2) !important; margin-bottom: .45rem; }
+[data-testid="stExpander"] summary { padding: .45rem .8rem !important; font-size: .86rem; color: var(--text) !important; }
+[data-testid="stExpander"] summary p { color: var(--text) !important; }
+[data-testid="stExpander"] svg { color: var(--muted) !important; }
+[data-testid="stPopoverButton"] { border: 0 !important; background: transparent !important; font-size: 1.2rem; }
+[data-testid="stPopoverBody"] { background: var(--surface) !important; color: var(--text); max-width: 460px; }
+.stButton > button { min-height: 2rem; padding: .2rem .7rem; font-size: .85rem; }
 """
 
 
@@ -336,3 +350,10 @@ def build_css(mode: str) -> str:
     variables = "\n".join(f"  --{name}: {value};" for name, value in palette.items())
     body = _BASE_CSS.replace("__FONTS__", FONTS_URL).replace("__SCHEME__", "dark" if mode == DARK else "light")
     return f"<style>\n:root {{\n{variables}\n}}\n{body}\n</style>"
+
+PANEL_CSS = """<style>
+.block-container, [data-testid='stBottomBlockContainer'] { max-width: 1400px; }
+/* the side panel column stays on screen while the chat scrolls */
+[data-testid="stColumn"]:has(.st-key-th_sidepanel) { position: sticky; top: 3.6rem; align-self: flex-start;
+  max-height: calc(100vh - 4.5rem); overflow-y: auto; }
+</style>"""

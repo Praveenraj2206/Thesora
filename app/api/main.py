@@ -294,12 +294,20 @@ def ingest(session_id: str, files: list[UploadFile] = File(default=[])) -> JSONR
     check_file_count(len(files))
     session = get_manager().get(session_id)
     results: list[dict[str, Any]] = []
+    session_limit = config.MAX_SESSION_PDF_MB * BYTES_PER_MB
     with session.lock, tempfile.TemporaryDirectory(prefix="thesora-") as temp:
         for upload in files:
             label = Path(upload.filename or "unnamed").name
             try:
                 path = save_upload(upload, Path(temp))
-                results.append(session.assistant.ingest_pdf(path, doc_id=path.name))
+                size = path.stat().st_size
+                if getattr(session, "pdf_bytes", 0) + size > session_limit:
+                    raise UploadError(f"{label}: this chat already holds close to {config.MAX_SESSION_PDF_MB} MB of PDFs. "
+                                      "Start a new chat for more papers.")
+                result = session.assistant.ingest_pdf(path, doc_id=path.name)
+                if result["status"] == "ingested":
+                    session.pdf_bytes = getattr(session, "pdf_bytes", 0) + size
+                results.append(result)
             except (UploadError, PDFLoadError) as exc:
                 results.append({"document": label, "status": "failed", "error": str(exc)})
             except ThesoraError as exc:
@@ -344,3 +352,115 @@ def refine(session_id: str, request: RefineRequest) -> dict[str, Any]:
     manager = get_manager()
     documents = [doc["doc_id"] for doc in manager.get(session_id).assistant.documents()]
     return refine_prompt(manager.llm, request.text, request.mode, documents).to_dict()
+
+
+# ----------------------------------------------------------------------------- v2 batch A: metadata, BibTeX, notes
+class MetadataPatch(BaseModel):
+    """Body of PATCH /sessions/{id}/documents/{doc_id}/metadata; only the given fields change."""
+
+    title: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS)
+    authors: Optional[list[str]] = None
+    year: Optional[int] = Field(default=None, ge=1000, le=2999)
+    doi: Optional[str] = Field(default=None, max_length=200)
+
+
+@app.get("/sessions/{session_id}/metadata")
+def list_metadata(session_id: str) -> dict[str, Any]:
+    """Auto-detected (or user-corrected) title, authors, year and DOI per paper."""
+    return {"metadata": list(get_manager().get(session_id).assistant.metadata.values())}
+
+
+@app.patch("/sessions/{session_id}/documents/{doc_id}/metadata")
+def patch_metadata(session_id: str, doc_id: str, patch: MetadataPatch) -> dict[str, Any]:
+    """Correct a paper's citation details."""
+    meta = get_manager().get(session_id).assistant.metadata.get(doc_id)
+    if meta is None:
+        raise ValueError(f"No paper named '{doc_id}' in this chat.")
+    for key, value in patch.model_dump(exclude_none=True).items():
+        meta[key] = value
+    meta["edited"] = True
+    return meta
+
+
+@app.get("/sessions/{session_id}/bibtex")
+def get_bibtex(session_id: str):
+    """BibTeX for the papers in this chat (no LLM calls)."""
+    from fastapi.responses import PlainTextResponse
+    from app.generation.trust import bibtex
+
+    return PlainTextResponse(bibtex(list(get_manager().get(session_id).assistant.metadata.values())),
+                             media_type="application/x-bibtex")
+
+
+@app.get("/sessions/{session_id}/export")
+def export_notes(session_id: str):
+    """Markdown research notes: questions, answers and verified citations only (no LLM calls)."""
+    from fastapi.responses import PlainTextResponse
+    from app.generation.trust import notes_markdown
+
+    return PlainTextResponse(notes_markdown(get_manager().get(session_id).assistant.history), media_type="text/markdown")
+
+
+# ----------------------------------------------------------------------------- v2 N9 PDF panel, N11 explain + glossary
+class HighlightRequest(BaseModel):
+    doc_id: str = Field(min_length=1, max_length=config.MAX_FILENAME_CHARS)
+    page: int = Field(ge=1)
+    passage: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS * 4)
+
+
+class ExplainRequest(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=64)
+    selected_text: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
+    follow_up: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS)
+    previous: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS * 2)
+
+
+def _pdf(session_id: str, doc_id: str) -> bytes:
+    data = get_manager().get(session_id).assistant.pdf_bytes.get(doc_id)
+    if data is None:
+        raise ValueError(f"No paper named '{doc_id}' in this chat.")
+    return data
+
+
+@app.get("/sessions/{session_id}/documents/{doc_id}/pdf")
+def get_pdf(session_id: str, doc_id: str):
+    """The paper's bytes, served from memory (never from disk)."""
+    from fastapi.responses import Response
+
+    return Response(_pdf(session_id, doc_id), media_type="application/pdf")
+
+
+@app.get("/sessions/{session_id}/documents/{doc_id}/page/{page}.png")
+def get_page_png(session_id: str, doc_id: str, page: int, passage: Optional[str] = None):
+    """Fallback image of one page (with the passage highlighted) when the PDF viewer cannot load."""
+    from fastapi.responses import Response
+    from app.generation.viewer import page_png
+
+    return Response(page_png(_pdf(session_id, doc_id), page, passage), media_type="image/png")
+
+
+@app.post("/sessions/{session_id}/highlight")
+def post_highlight(session_id: str, request: HighlightRequest) -> dict[str, Any]:
+    """Rectangles of the cited passage on its page, in the PDF viewer's annotation format."""
+    from app.generation.viewer import highlight
+
+    return highlight(_pdf(session_id, request.doc_id), request.page, request.passage)
+
+
+@app.post("/sessions/{session_id}/explain")
+def post_explain(session_id: str, request: ExplainRequest) -> dict[str, Any]:
+    """Plain-English explanation of selected text from one answer's passages (not evidence)."""
+    return get_manager().get(session_id).assistant.explain(
+        request.answer_id, request.selected_text, request.follow_up, request.previous)
+
+
+@app.get("/sessions/{session_id}/glossary")
+def get_glossary(session_id: str) -> dict[str, Any]:
+    """Abbreviations found in this chat's papers, with long form and page."""
+    return {"glossary": get_manager().get(session_id).assistant.glossary}
+
+
+@app.post("/sessions/{session_id}/agree")
+def post_agree(session_id: str, request: SynthesizeRequest) -> dict[str, Any]:
+    """N12: do the papers agree on a topic? Extractive positions per paper plus conflicts by severity (1-3)."""
+    return get_manager().get(session_id).assistant.agree(request.topic)

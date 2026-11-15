@@ -24,7 +24,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import config  # noqa: E402
-from ui.styles import DARK, LIGHT, build_css  # noqa: E402
+from ui.styles import DARK, LIGHT, PANEL_CSS, build_css  # noqa: E402
+
+try:  # N9 PDF viewer component; falls back to a page image when missing
+    from streamlit_pdf_viewer import pdf_viewer
+except Exception:  # pragma: no cover
+    pdf_viewer = None
 
 DEFAULT_API_URL = config.API_URL
 REQUEST_TIMEOUT_S = config.UI_REQUEST_TIMEOUT_S
@@ -38,7 +43,8 @@ HTTP_UNAVAILABLE = 503
 
 MODE_ASK_LABEL = "Ask a question"
 MODE_COMPARE_LABEL = "Compare papers"
-MODES = {MODE_ASK_LABEL: "ask", MODE_COMPARE_LABEL: "compare"}
+MODE_AGREE_LABEL = "Agree?"
+MODES = {MODE_ASK_LABEL: "ask", MODE_COMPARE_LABEL: "compare", MODE_AGREE_LABEL: "agree"}
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 Reply = tuple[Optional[Any], Optional[str], Optional[int]]
@@ -157,36 +163,6 @@ def confidence_meter(confidence: float) -> str:
     )
 
 
-def source_card(source: dict[str, Any]) -> str:
-    if source["verified"] is True:
-        badge = '<span class="th-badge good">✓ Verified</span>'
-    elif source["verified"] is None:
-        badge = '<span class="th-badge muted">Cited</span>' if source["cited"] else '<span class="th-badge muted">Context</span>'
-    elif source["cited"]:
-        badge = '<span class="th-badge warn">! Unverified</span>'
-    else:
-        badge = '<span class="th-badge muted">Not cited</span>'
-    location = f"Page {source['page_number']}"
-    if source.get("section"):
-        location += f" · {source['section']}"
-    relevance = min(1.0, max(0.0, float(source.get("relevance", 0.0))))
-    text = " ".join(source["text"].split())
-    if len(text) > SNIPPET_CHARS:
-        text = text[:SNIPPET_CHARS] + "…"
-    return (
-        '<details class="th-src"><summary>'
-        f'<span class="th-src-n">{source["index"]}</span>'
-        f'<span class="th-src-main"><div class="th-src-doc">{esc(source["doc_id"])}</div>'
-        f'<div class="th-src-loc">{esc(location)}</div></span>'
-        f'{badge}'
-        f'<span class="th-src-rel"><div class="th-src-rel-track"><div class="th-src-rel-fill" '
-        f'style="width:{relevance * PERCENT:.0f}%"></div></div>'
-        f'<div class="th-src-rel-label">rel {relevance:.2f}</div></span>'
-        '<span class="th-chev">▶</span></summary>'
-        f'<div class="th-src-text">{esc(text)}</div></details>'
-    )
-
-
 def card() -> Any:
     """A bordered container styled as a card (see `.th-card-mark` in styles.py)."""
     box = st.container(border=True)
@@ -196,7 +172,7 @@ def card() -> Any:
 
 # ============================================================================ rendering
 def render_question(prompt: str, mode: str) -> None:
-    label = "Compare" if mode == "compare" else "Question"
+    label = {"compare": "Compare", "agree": "Agree?"}.get(mode, "Question")
     st.markdown(
         f'<div class="th-q"><div class="th-q-bubble"><span class="th-q-mode">{label}</span>{esc(prompt)}</div></div>',
         unsafe_allow_html=True,
@@ -213,11 +189,15 @@ def render_result(result: dict[str, Any]) -> None:
     mode = result.get("mode", "ask")
     with card():
         title = "Comparison" if mode == "synthesize" else "Answer"
-        st.markdown(
+        head, menu = st.columns([12, 1], vertical_alignment="center")
+        head.markdown(
             f'<div class="th-answer-head"><span class="th-answer-label">{title}</span>'
             f'<span class="th-meta">{result.get("latency_s", 0)} s</span></div>',
             unsafe_allow_html=True,
         )
+        if not result["abstained"]:
+            with menu.popover("⋯", help="Checks and explain"):
+                render_answer_menu(result)
         if result["abstained"]:
             st.markdown(
                 notice("warn", "?", "Not answered from your papers", result.get("message") or config.ABSTAIN_MESSAGE),
@@ -239,18 +219,184 @@ def render_result(result: dict[str, Any]) -> None:
             numbers = ", ".join(f"[{n}]" for n in result["invalid_citations"])
             st.markdown(notice("bad", "×", f"Invalid citation {numbers}", "The model cited a passage that does not exist."),
                         unsafe_allow_html=True)
+        render_trust_extras(result)
         st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
-        sources = result.get("sources", [])
-        if sources:
-            st.markdown(
-                f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>'
-                + "".join(source_card(s) for s in sources),
-                unsafe_allow_html=True,
-            )
+        render_sources(result, result.get("sources", []))
+
+
+def _key() -> str:
+    st.session_state._btn = st.session_state.get("_btn", 0) + 1
+    return f"btn{st.session_state._btn}"
+
+
+SOURCE_BADGE = {True: "✓ Verified", None: "Cited", False: "! Unverified"}
+
+
+def _source_badge(source: dict[str, Any]) -> str:
+    if source["verified"] is None:
+        return "Cited" if source["cited"] else "Context"
+    if not source["cited"]:
+        return "Not cited"
+    return SOURCE_BADGE[bool(source["verified"])]
+
+
+def _open_panel(**panel: Any) -> None:
+    st.session_state.panel = panel
+    st.rerun()
+
+
+def render_sources(result: dict[str, Any], sources: list[dict[str, Any]]) -> None:
+    """One compact dropdown per source; inside: the passage, then 📄 Open page and 💡 Explain."""
+    if not sources:
+        return
+    st.markdown(f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>', unsafe_allow_html=True)
+    for src in sources:
+        rel = min(1.0, max(0.0, float(src.get("relevance", 0.0))))
+        label = f"[{src['index']}]  {src.get('label') or src['doc_id']}  ·  {_source_badge(src)}  ·  rel {rel:.2f}"
+        with st.expander(label):
+            text = " ".join(src["text"].split())
+            st.markdown(f'<div class="th-src-text" style="padding:0;border:0">'
+                        f'{esc(text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + "…")}</div>',
+                        unsafe_allow_html=True)
+            if src.get("meaning"):
+                st.caption(f"Meaning check: {src['meaning']}")
+            open_col, explain_col, _ = st.columns([1, 1, 2])
+            if open_col.button("📄 Open page", key=_key(), help="Show this page with the passage highlighted"):
+                _open_panel(tab="citation", doc_id=src["doc_id"], page=src["page_number"], passage=src["text"],
+                            label=src.get("label") or src["doc_id"])
+            if result.get("answer_id") and explain_col.button("💡 Explain", key=_key(), help="Explain this passage"):
+                _open_panel(tab="explain", answer_id=result["answer_id"], text=text[:1500])
+
+
+def render_answer_menu(result: dict[str, Any]) -> None:
+    """The ⋯ menu: sentence check, table check and explain-the-answer, shown only when asked."""
+    sentences = result.get("sentences") or []
+    if sentences:
+        st.markdown("**Sentence check**")
+        for item in sentences:
+            st.markdown(f"{STATUS_ICON.get(item['status'], item['status'])} · {esc(item['text'])}")
+        if result.get("nli_available") is False:
+            st.caption("Checked by wording only (meaning check is off).")
+    cells = result.get("table_cells") or []
+    if cells:
+        st.markdown("**Table check: is each cell in the paper?**")
+        for cell in cells:
+            ev = ", ".join(f"[{e['passage']}] p.{e['page']}" for e in cell["evidence"])
+            st.markdown(f"{STATUS_ICON.get(cell['status'], cell['status'])} · {esc(cell['paper'])} · {esc(cell['column'])}"
+                        + (f" — {ev}" if ev else ""))
+    if result.get("answer_id") and st.button("💡 Explain this answer", key=_key(), use_container_width=True):
+        _open_panel(tab="explain", answer_id=result["answer_id"],
+                    text=re.sub(r"\[\d+\]", "", result.get("answer", ""))[:1500])
+    if not (sentences or cells or result.get("answer_id")):
+        st.caption("No extra checks for this answer.")
+
+
+def render_panel(panel: dict[str, Any]) -> None:
+    """Right-hand panel (about 30%): Citation tab (PDF page with highlight) and Explain tab."""
+    if st.button("✕ Close panel", key=_key(), use_container_width=True):
+        st.session_state.pop("panel", None)
+        st.rerun()
+    names = ["Citation", "Explain"] if panel.get("tab") == "citation" else ["Explain", "Citation"]
+    tabs = dict(zip(names, st.tabs(names)))
+    with tabs["Citation"]:
+        if panel.get("doc_id"):
+            render_citation(panel)
+        else:
+            st.caption("Click a 📄 source button under an answer to open its page here.")
+    with tabs["Explain"]:
+        if panel.get("answer_id"):
+            render_explain(panel)
+        else:
+            st.caption("Click 💡 Explain under an answer to get a plain-English explanation here.")
+
+
+def render_citation(panel: dict[str, Any]) -> None:
+    base = f"{st.session_state.api_url}{session_path('/documents/')}{requests.utils.quote(panel['doc_id'])}"
+    st.markdown(f"**{esc(panel['label'])}**")
+    hl, err, _ = call_api("POST", session_path("/highlight"),
+                          json={"doc_id": panel["doc_id"], "page": panel["page"], "passage": panel["passage"]})
+    if err:
+        st.markdown(notice("bad", "×", "Could not open the page", err), unsafe_allow_html=True)
+        return
+    if not hl["found"]:
+        st.caption("The exact passage could not be located on this page, so it is shown without a highlight.")
+    try:
+        if pdf_viewer is None or config.PDF_PANEL_MODE == "image":
+            raise RuntimeError("image mode")
+        pdf = requests.get(f"{base}/pdf", timeout=REQUEST_TIMEOUT_S).content
+        pdf_viewer(pdf, width=config.VIEWER_WIDTH_PX, zoom_level="auto", annotations=hl["annotations"], pages_to_render=[panel["page"]],
+                   key=f"pdf_{panel['doc_id']}_{panel['page']}")
+    except Exception:
+        png = requests.get(f"{base}/page/{panel['page']}.png", params={"passage": panel["passage"][:1500]},
+                           timeout=REQUEST_TIMEOUT_S).content
+        st.image(png, use_container_width=True)
+
+
+def render_explain(panel: dict[str, Any]) -> None:
+    text = st.text_area("Text to explain (edit to select just part of it)", value=panel.get("text", ""), height=140,
+                        key=f"exp_text_{panel['answer_id']}")
+    follow = st.text_input("Follow-up question (optional)", key=f"exp_follow_{panel['answer_id']}")
+    if st.button("💡 Explain", type="primary", key=_key()):
+        data, err, _ = call_api("POST", session_path("/explain"), label="Explaining",
+                                json={"answer_id": panel["answer_id"], "selected_text": text or "",
+                                      "follow_up": follow or None, "previous": panel.get("last")})
+        panel["result"] = {"error": err} if err else data
+        if data and not err:
+            panel["last"] = data["explanation"]
+    result = panel.get("result")
+    if result and result.get("error"):
+        st.markdown(notice("bad", "×", "Could not explain", result["error"]), unsafe_allow_html=True)
+    elif result:
+        for g in result.get("glossary", []):
+            st.markdown(f"**From the paper:** {esc(g['abbr'])} = {esc(g['long_form'])}, p.{g['page']}")
+        st.caption(result["label"])
+        st.markdown(result["explanation"])
+
+
+STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Unverified", "uncited": "○ Uncited",
+               "supported": "✓ Supported", "partly": "~ Partly supported", "not_found": "✗ Not found in text",
+               "not_stated": "– Not stated"}
+
+
+def render_trust_extras(result: dict[str, Any]) -> None:
+    """Always visible but compact: part chips, repair note and silent papers. Detailed checks live in the ⋯ menu."""
+    for part in result.get("parts") or []:
+        icon = "✓ Answered" if part["answered"] else "✗ Not found in your papers"
+        st.markdown(f'<div class="th-chip">{icon} · {esc(part["question"])}</div>', unsafe_allow_html=True)
+    repair = result.get("repair") or {}
+    if repair.get("removed"):
+        n = repair["removed"]
+        st.caption(f"ⓘ {n} claim{'s' if n != 1 else ''} removed because it could not be verified against the papers.")
+    if result.get("silent_papers"):
+        st.caption("No evidence from: " + ", ".join(result["silent_papers"]) + " — silence is not disagreement.")
+
+
+def render_agree(data: dict[str, Any]) -> None:
+    """N12: Paper / Position / Passage table, conflict badges with both quotes (icon + text)."""
+    with card():
+        st.markdown('<span class="th-answer-label">Do the papers agree?</span>', unsafe_allow_html=True)
+        if data.get("message"):
+            st.caption(data["message"])
+        if not data.get("rows"):
+            st.markdown(notice("warn", "?", "No paper discusses this topic", config.ABSTAIN_MESSAGE), unsafe_allow_html=True)
+            return
+        st.markdown("| Paper | Position (quoted) | Passage |\n| --- | --- | --- |\n" + "\n".join(
+            f"| {r['label']} | {r['position'].replace('|', '/')} | p.{r['page']} {r['section']} |" for r in data["rows"]))
+        show_all = st.toggle("Show wording-only differences", key=_key())
+        shown = [c for c in data.get("conflicts", []) if show_all or c["severity"] > 1]
+        if not shown:
+            st.markdown("**✓ No conflicts found** between the papers' statements.")
+        for c in shown:
+            icon = {3: "⚠️ Contradiction", 2: "⚠️ Numbers differ", 1: "~ Wording differs"}[c["severity"]]
+            with st.expander(f"{icon} · {c['papers'][0]} vs {c['papers'][1]}"):
+                st.markdown(f"{esc(c['reason'])}\n\n> {esc(c['quotes'][0])}\n\n> {esc(c['quotes'][1])}")
 
 
 def render_turn(turn: dict[str, Any]) -> None:
     render_question(turn["prompt"], turn.get("mode", "ask"))
+    if turn.get("mode") == "agree" and not turn.get("error"):
+        render_agree(turn["data"])
+        return
     if turn.get("error"):
         with card():
             st.markdown(notice("bad", "×", "Something went wrong", turn["error"]), unsafe_allow_html=True)
@@ -339,6 +485,10 @@ def sidebar() -> list[dict[str, Any]]:
             accept_multiple_files=True,
             key=f"uploader_{st.session_state.uploader_key}",
         )
+        for f in files or []:
+            if f.size > config.LARGE_FILE_WARN_MB * 1024 * 1024:
+                st.markdown(notice("warn", "!", f"{f.name}: large file ({f.size / 1048576:.0f} MB)",
+                                   "It may use more memory and take longer to read."), unsafe_allow_html=True)
         too_many = bool(files) and len(files) > MAX_FILES_PER_REQUEST
         if too_many:
             st.markdown(
@@ -376,6 +526,22 @@ def sidebar() -> list[dict[str, Any]]:
         else:
             st.markdown('<div class="th-empty">No papers yet. Every new chat starts empty.</div>',
                         unsafe_allow_html=True)
+        if documents:
+            gl, _, _ = call_api("GET", session_path("/glossary"), timeout=HEALTH_TIMEOUT_S)
+            terms = (gl or {}).get("glossary", [])
+            with st.expander(f"Glossary ({len(terms)})"):
+                for g in terms:
+                    st.markdown(f"**{esc(g['abbr'])}** — {esc(g['long_form'])} · {esc(g['doc_id'])} p.{g['page']}")
+                if not terms:
+                    st.caption("No abbreviations defined in these papers.")
+            try:
+                bib_resp = requests.get(f"{st.session_state.api_url}{session_path('/bibtex')}", timeout=HEALTH_TIMEOUT_S)
+                notes_resp = requests.get(f"{st.session_state.api_url}{session_path('/export')}", timeout=HEALTH_TIMEOUT_S)
+                st.download_button("Download .bib", bib_resp.text, file_name="thesora.bib", use_container_width=True)
+                st.download_button("Download notes (.md)", notes_resp.text, file_name="thesora_notes.md",
+                                   use_container_width=True)
+            except requests.exceptions.RequestException:
+                st.caption("Exports are unavailable while the backend is unreachable.")
         st.markdown(
             f'<div class="th-footer">Max {MAX_FILES_PER_REQUEST} PDFs per upload · {config.MAX_UPLOAD_MB} MB each.<br>'
             "Papers live only in this chat's memory; nothing is saved to disk.</div>",
@@ -408,7 +574,7 @@ def refiner_panel(mode: str) -> None:
             else:
                 data, err, status = call_api(
                     "POST", session_path("/refine"), label="Refining your question",
-                    json={"text": st.session_state.refine_text, "mode": mode},
+                    json={"text": st.session_state.refine_text, "mode": "compare" if mode == "agree" else mode},
                 )
                 if not handle_expired(status):
                     st.session_state.refine_result = data if not err else {"error": err}
@@ -450,6 +616,17 @@ def init_state() -> None:
 
 def run_prompt(prompt: str, mode: str) -> None:
     render_question(prompt, mode)
+    if mode == "agree":
+        data, err, status = call_api("POST", session_path("/agree"), label="Comparing positions", json={"topic": prompt})
+        if handle_expired(status):
+            st.rerun()
+        st.session_state.history.append({"prompt": prompt, "mode": mode, "error": err} if err else
+                                        {"prompt": prompt, "mode": mode, "data": data})
+        if err:
+            st.markdown(notice("bad", "×", "Something went wrong", err), unsafe_allow_html=True)
+        else:
+            render_agree(data)
+        return
     if mode == "compare":
         data, err, status = call_api("POST", session_path("/synthesize"), label="Comparing papers",
                                      json={"topic": prompt})
@@ -487,7 +664,8 @@ def main() -> None:
         st.markdown(notice("warn", "!", "That chat had ended", "The backend restarted, so a new empty chat was started. "
                            "Upload your PDFs again."), unsafe_allow_html=True)
 
-    controls, refine_toggle = st.columns([3, 2], vertical_alignment="center")
+    modebar = st.container(key="th_modebar")  # stays pinned at the top while the chat scrolls
+    controls, refine_toggle = modebar.columns([3, 2], vertical_alignment="center")
     mode_label = controls.segmented_control("Mode", list(MODES), default=MODE_ASK_LABEL, key="mode_label",
                                             label_visibility="collapsed") or MODE_ASK_LABEL
     mode = MODES[mode_label]
@@ -496,18 +674,28 @@ def main() -> None:
 
     # The chat box is pinned to the bottom wherever it is created; reading it first lets the welcome
     # cards disappear as soon as the first question is sent.
-    placeholder = "Ask a question about your papers…" if mode == "ask" else "Topic to compare across papers…"
+    placeholder = {"ask": "Ask a question about your papers…", "compare": "Topic to compare across papers…",
+                   "agree": "Topic to check: do the papers agree?"}[mode]
     prompt = st.chat_input(placeholder, disabled=not st.session_state.session_id)
     pending = st.session_state.pop("pending_prompt", None) or prompt
 
-    if not st.session_state.history and not pending:
-        render_empty_state(bool(documents))
-    for turn in st.session_state.history:
-        render_turn(turn)
-    if pending:
-        run_prompt(pending, mode)
-    if show_refiner:
-        refiner_panel(mode)
+    st.session_state._btn = 0
+    panel = st.session_state.get("panel")
+    if panel:
+        st.markdown(PANEL_CSS, unsafe_allow_html=True)  # wider page while the side panel is open
+    main_col, side_col = st.columns([7, 3]) if panel else (st.container(), None)
+    with main_col:
+        if not st.session_state.history and not pending:
+            render_empty_state(bool(documents))
+        for turn in st.session_state.history:
+            render_turn(turn)
+        if pending:
+            run_prompt(pending, mode)
+        if show_refiner:
+            refiner_panel(mode)
+    if side_col is not None:
+        with side_col, st.container(key="th_sidepanel"):  # follows the reader down the chat
+            render_panel(panel)
 
 
 main()

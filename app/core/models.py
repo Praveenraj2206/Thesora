@@ -30,6 +30,8 @@ class DocumentChunk:
     section: str
     text: str
     chunk_index: int
+    chunk_type: str = "text"  # N1: "text" or "table" (markdown rows)
+    search_text: str = ""  # N2a: text used for embedding + BM25 (with "Title › Section" header); display uses text
 
 
 @dataclass
@@ -70,6 +72,8 @@ class Source:
     cited: bool = False
     verified: Optional[bool] = None
     match_score: Optional[float] = None
+    meaning: Optional[str] = None  # N8: entailed / weak / contradicted (None when NLI did not run)
+    label: Optional[str] = None  # N4: "Smith et al., 2023 · p.4 · Results"
 
 
 @dataclass
@@ -86,6 +90,13 @@ class Answer:
     message: Optional[str] = None
     latency_s: float = 0.0
     mode: str = "ask"
+    sentences: list[dict[str, Any]] = field(default_factory=list)  # N5
+    silent_papers: list[str] = field(default_factory=list)  # N5
+    repair: Optional[dict[str, Any]] = None  # N10
+    table_cells: list[dict[str, Any]] = field(default_factory=list)  # N3
+    nli_available: Optional[bool] = None  # N8
+    parts: list[dict[str, Any]] = field(default_factory=list)  # N6
+    answer_id: Optional[str] = None  # N11
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dictionary."""

@@ -70,7 +70,7 @@ HEADING_SIZE_RATIO = _env_float("HEADING_SIZE_RATIO", 1.15)
 HEADING_MIN_CHARS = 3
 HEADING_MAX_CHARS = 120
 HEADING_BOLD_MAX_CHARS = 80
-MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 50)  # per file
+MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 100)  # per file
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 PDF_MAGIC = b"%PDF"
 MAX_FILENAME_CHARS = 150
@@ -159,3 +159,42 @@ CONTEXT_PRECISION_SIM_THRESHOLD = _env_float("CONTEXT_PRECISION_SIM_THRESHOLD", 
 CONTEXT_RECALL_SIM_THRESHOLD = _env_float("CONTEXT_RECALL_SIM_THRESHOLD", 0.5)
 JUDGE_CONTEXT_CHARS = 6000
 EVAL_MIN_SENTENCE_CHARS = 15
+
+# --------------------------------------------------------------------------- v2 batch A (trust)
+NLI_ENABLED = _env_str("NLI_ENABLED", "0") == "1"  # N8; off by default: smallest model is 283 MB (> 200 MB budget)
+NLI_MODEL = _env_str("NLI_MODEL", "cross-encoder/nli-deberta-v3-xsmall")
+NLI_PASS = _env_float("NLI_PASS", 0.5)  # entailment probability for PASS
+NLI_FAIL_CONTRADICTION = _env_float("NLI_FAIL_CONTRADICTION", 0.5)  # contradiction probability for FAIL
+NLI_PREMISE_SENTENCES = _env_int("NLI_PREMISE_SENTENCES", 2)
+SENTENCE_WEAK_SCORE = _env_float("SENTENCE_WEAK_SCORE", 60.0)  # word score for "weak" (below = unverified)
+SELF_REPAIR = _env_str("SELF_REPAIR", "1") == "1"  # one stricter retry, then drop unsupported sentences (N10)
+REPAIR_MAX_TOKENS = _env_int("REPAIR_MAX_TOKENS", 600)
+METADATA_TITLE_MAX_CHARS = 250
+METADATA_AUTHOR_MAX_CHARS = 300
+LARGE_FILE_WARN_MB = _env_int("LARGE_FILE_WARN_MB", 5)  # N7: UI warns above this size
+MAX_SESSION_PDF_MB = _env_int("MAX_SESSION_PDF_MB", 400)  # N7: total PDF size allowed per chat
+PARTIAL_ANSWERS = _env_str("PARTIAL_ANSWERS", "1") == "1"  # N6: answer multi-part questions part by part
+PART_MIN_WORDS = _env_int("PART_MIN_WORDS", 4)
+
+# --------------------------------------------------------------------------- v2 N9 / N11
+VIEWER_WIDTH_PX = _env_int("VIEWER_WIDTH_PX", 300)  # explicit width: the viewer needs one inside tabs (fits the 30% panel)
+HIGHLIGHT_COLOR = _env_str("HIGHLIGHT_COLOR", "#E8A317")
+HIGHLIGHT_MIN_SENTENCE_CHARS = 25
+PAGE_PNG_ZOOM = _env_float("PAGE_PNG_ZOOM", 1.5)  # fallback page image when the viewer cannot load
+EXPLAIN_MAX_TOKENS = _env_int("EXPLAIN_MAX_TOKENS", 350)
+EXPLAIN_MAX_SELECTION_CHARS = _env_int("EXPLAIN_MAX_SELECTION_CHARS", 1500)
+GLOSSARY_ENABLED = _env_str("GLOSSARY_ENABLED", "1") == "1"
+GLOSSARY_MAX_TERMS = _env_int("GLOSSARY_MAX_TERMS", 200)
+PDF_PANEL_MODE = _env_str("PDF_PANEL_MODE", "viewer")  # "viewer" (pdf.js) or "image" (PNG page; always fits narrow panels)
+
+# --------------------------------------------------------------------------- v2 N1 / N2 / N12
+PDF_LAYOUT_MODE = _env_str("PDF_LAYOUT_MODE", "auto")  # "auto": add table chunks; "plain": text only (old behaviour)
+TABLE_MIN_ROWS = _env_int("TABLE_MIN_ROWS", 2)
+COLUMN_GAP_RATIO = _env_float("COLUMN_GAP_RATIO", 0.15)  # check_extraction.py: share of blocks on each side = two columns
+CONTEXT_HEADERS = _env_str("CONTEXT_HEADERS", "0") == "1"  # N2a (default set from compare_retrievers results)
+MULTI_QUERY = _env_str("MULTI_QUERY", "0") == "1"  # N2b: off by default (one extra LLM call)
+MULTI_QUERY_VARIANTS = _env_int("MULTI_QUERY_VARIANTS", 2)
+MULTI_QUERY_MAX_TOKENS = _env_int("MULTI_QUERY_MAX_TOKENS", 60)
+CONTEXT_EXPANSION = _env_str("CONTEXT_EXPANSION", "0") == "1"  # N2c: give the LLM the passage plus its neighbours
+CHUNK_PARENT_CHARS = _env_int("CHUNK_PARENT_CHARS", 1200)
+AGREE_NUMBER_WINDOW = _env_int("AGREE_NUMBER_WINDOW", 6)  # words around a number that name its metric
