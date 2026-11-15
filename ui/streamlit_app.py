@@ -24,7 +24,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import config  # noqa: E402
-from ui.styles import DARK, LIGHT, build_css  # noqa: E402
+from ui.styles import DARK, LIGHT, PANEL_CSS, build_css  # noqa: E402
+
+try:  # N9 PDF viewer component; falls back to a page image when missing
+    from streamlit_pdf_viewer import pdf_viewer
+except Exception:  # pragma: no cover
+    pdf_viewer = None
 
 DEFAULT_API_URL = config.API_URL
 REQUEST_TIMEOUT_S = config.UI_REQUEST_TIMEOUT_S
@@ -244,12 +249,97 @@ def render_result(result: dict[str, Any]) -> None:
         render_trust_extras(result)
         st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
         sources = result.get("sources", [])
+        render_panel_buttons(result, sources)
         if sources:
             st.markdown(
                 f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>'
                 + "".join(source_card(s) for s in sources),
                 unsafe_allow_html=True,
             )
+
+
+def _key() -> str:
+    st.session_state._btn = st.session_state.get("_btn", 0) + 1
+    return f"btn{st.session_state._btn}"
+
+
+def render_panel_buttons(result: dict[str, Any], sources: list[dict[str, Any]]) -> None:
+    """N9/N11 entry points: open a cited page in the side panel, or explain the answer."""
+    cited = [s for s in sources if s.get("cited")][:4]
+    if result.get("abstained") or not (cited or result.get("answer_id")):
+        return
+    cols = st.columns(len(cited) + (1 if result.get("answer_id") else 0))
+    for col, src in zip(cols, cited):
+        if col.button(f"📄 [{src['index']}] p.{src['page_number']}", key=_key(), help="Open this page with the passage highlighted"):
+            st.session_state.panel = {"tab": "citation", "doc_id": src["doc_id"], "page": src["page_number"],
+                                      "passage": src["text"], "label": src.get("label") or src["doc_id"]}
+            st.rerun()
+    if result.get("answer_id") and cols[-1].button("💡 Explain", key=_key(), help="Plain-English explanation"):
+        st.session_state.panel = {"tab": "explain", "answer_id": result["answer_id"],
+                                  "text": re.sub(r"\[\d+\]", "", result.get("answer", ""))[:1500]}
+        st.rerun()
+
+
+def render_panel(panel: dict[str, Any]) -> None:
+    """Right-hand panel (about 30%): Citation tab (PDF page with highlight) and Explain tab."""
+    if st.button("✕ Close panel", key=_key(), use_container_width=True):
+        st.session_state.pop("panel", None)
+        st.rerun()
+    names = ["Citation", "Explain"] if panel.get("tab") == "citation" else ["Explain", "Citation"]
+    tabs = dict(zip(names, st.tabs(names)))
+    with tabs["Citation"]:
+        if panel.get("doc_id"):
+            render_citation(panel)
+        else:
+            st.caption("Click a 📄 source button under an answer to open its page here.")
+    with tabs["Explain"]:
+        if panel.get("answer_id"):
+            render_explain(panel)
+        else:
+            st.caption("Click 💡 Explain under an answer to get a plain-English explanation here.")
+
+
+def render_citation(panel: dict[str, Any]) -> None:
+    base = f"{st.session_state.api_url}{session_path('/documents/')}{requests.utils.quote(panel['doc_id'])}"
+    st.markdown(f"**{esc(panel['label'])}**")
+    hl, err, _ = call_api("POST", session_path("/highlight"),
+                          json={"doc_id": panel["doc_id"], "page": panel["page"], "passage": panel["passage"]})
+    if err:
+        st.markdown(notice("bad", "×", "Could not open the page", err), unsafe_allow_html=True)
+        return
+    if not hl["found"]:
+        st.caption("The exact passage could not be located on this page, so it is shown without a highlight.")
+    try:
+        if pdf_viewer is None or config.PDF_PANEL_MODE == "image":
+            raise RuntimeError("image mode")
+        pdf = requests.get(f"{base}/pdf", timeout=REQUEST_TIMEOUT_S).content
+        pdf_viewer(pdf, width=config.VIEWER_WIDTH_PX, zoom_level="auto", annotations=hl["annotations"], pages_to_render=[panel["page"]],
+                   key=f"pdf_{panel['doc_id']}_{panel['page']}")
+    except Exception:
+        png = requests.get(f"{base}/page/{panel['page']}.png", params={"passage": panel["passage"][:1500]},
+                           timeout=REQUEST_TIMEOUT_S).content
+        st.image(png, use_container_width=True)
+
+
+def render_explain(panel: dict[str, Any]) -> None:
+    text = st.text_area("Text to explain (edit to select just part of it)", value=panel.get("text", ""), height=140,
+                        key=f"exp_text_{panel['answer_id']}")
+    follow = st.text_input("Follow-up question (optional)", key=f"exp_follow_{panel['answer_id']}")
+    if st.button("💡 Explain", type="primary", key=_key()):
+        data, err, _ = call_api("POST", session_path("/explain"), label="Explaining",
+                                json={"answer_id": panel["answer_id"], "selected_text": text or "",
+                                      "follow_up": follow or None, "previous": panel.get("last")})
+        panel["result"] = {"error": err} if err else data
+        if data and not err:
+            panel["last"] = data["explanation"]
+    result = panel.get("result")
+    if result and result.get("error"):
+        st.markdown(notice("bad", "×", "Could not explain", result["error"]), unsafe_allow_html=True)
+    elif result:
+        for g in result.get("glossary", []):
+            st.markdown(f"**From the paper:** {esc(g['abbr'])} = {esc(g['long_form'])}, p.{g['page']}")
+        st.caption(result["label"])
+        st.markdown(result["explanation"])
 
 
 STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Unverified", "uncited": "○ Uncited",
@@ -418,6 +508,13 @@ def sidebar() -> list[dict[str, Any]]:
             st.markdown('<div class="th-empty">No papers yet. Every new chat starts empty.</div>',
                         unsafe_allow_html=True)
         if documents:
+            gl, _, _ = call_api("GET", session_path("/glossary"), timeout=HEALTH_TIMEOUT_S)
+            terms = (gl or {}).get("glossary", [])
+            with st.expander(f"Glossary ({len(terms)})"):
+                for g in terms:
+                    st.markdown(f"**{esc(g['abbr'])}** — {esc(g['long_form'])} · {esc(g['doc_id'])} p.{g['page']}")
+                if not terms:
+                    st.caption("No abbreviations defined in these papers.")
             try:
                 bib_resp = requests.get(f"{st.session_state.api_url}{session_path('/bibtex')}", timeout=HEALTH_TIMEOUT_S)
                 notes_resp = requests.get(f"{st.session_state.api_url}{session_path('/export')}", timeout=HEALTH_TIMEOUT_S)
@@ -550,14 +647,23 @@ def main() -> None:
     prompt = st.chat_input(placeholder, disabled=not st.session_state.session_id)
     pending = st.session_state.pop("pending_prompt", None) or prompt
 
-    if not st.session_state.history and not pending:
-        render_empty_state(bool(documents))
-    for turn in st.session_state.history:
-        render_turn(turn)
-    if pending:
-        run_prompt(pending, mode)
-    if show_refiner:
-        refiner_panel(mode)
+    st.session_state._btn = 0
+    panel = st.session_state.get("panel")
+    if panel:
+        st.markdown(PANEL_CSS, unsafe_allow_html=True)  # wider page while the side panel is open
+    main_col, side_col = st.columns([7, 3]) if panel else (st.container(), None)
+    with main_col:
+        if not st.session_state.history and not pending:
+            render_empty_state(bool(documents))
+        for turn in st.session_state.history:
+            render_turn(turn)
+        if pending:
+            run_prompt(pending, mode)
+        if show_refiner:
+            refiner_panel(mode)
+    if side_col is not None:
+        with side_col:
+            render_panel(panel)
 
 
 main()

@@ -16,3 +16,6 @@ streamlit>=1.35
 # Improvements over naive RAG
 rank_bm25==0.2.2          # hybrid retrieval (BM25)
 rapidfuzz>=3.6,<4         # citation verification
+streamlit-pdf-viewer>=0.0.30   # N9 PDF side panel
+unv-scispacy-abbr>=0.1.1      # N11 glossary (Schwartz-Hearst abbreviations; Apache-2.0)
+spacy>=3.7                    # used blank("en") only, no model download

@@ -399,3 +399,62 @@ def export_notes(session_id: str):
     from app.generation.trust import notes_markdown
 
     return PlainTextResponse(notes_markdown(get_manager().get(session_id).assistant.history), media_type="text/markdown")
+
+
+# ----------------------------------------------------------------------------- v2 N9 PDF panel, N11 explain + glossary
+class HighlightRequest(BaseModel):
+    doc_id: str = Field(min_length=1, max_length=config.MAX_FILENAME_CHARS)
+    page: int = Field(ge=1)
+    passage: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS * 4)
+
+
+class ExplainRequest(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=64)
+    selected_text: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
+    follow_up: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS)
+    previous: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS * 2)
+
+
+def _pdf(session_id: str, doc_id: str) -> bytes:
+    data = get_manager().get(session_id).assistant.pdf_bytes.get(doc_id)
+    if data is None:
+        raise ValueError(f"No paper named '{doc_id}' in this chat.")
+    return data
+
+
+@app.get("/sessions/{session_id}/documents/{doc_id}/pdf")
+def get_pdf(session_id: str, doc_id: str):
+    """The paper's bytes, served from memory (never from disk)."""
+    from fastapi.responses import Response
+
+    return Response(_pdf(session_id, doc_id), media_type="application/pdf")
+
+
+@app.get("/sessions/{session_id}/documents/{doc_id}/page/{page}.png")
+def get_page_png(session_id: str, doc_id: str, page: int, passage: Optional[str] = None):
+    """Fallback image of one page (with the passage highlighted) when the PDF viewer cannot load."""
+    from fastapi.responses import Response
+    from app.generation.viewer import page_png
+
+    return Response(page_png(_pdf(session_id, doc_id), page, passage), media_type="image/png")
+
+
+@app.post("/sessions/{session_id}/highlight")
+def post_highlight(session_id: str, request: HighlightRequest) -> dict[str, Any]:
+    """Rectangles of the cited passage on its page, in the PDF viewer's annotation format."""
+    from app.generation.viewer import highlight
+
+    return highlight(_pdf(session_id, request.doc_id), request.page, request.passage)
+
+
+@app.post("/sessions/{session_id}/explain")
+def post_explain(session_id: str, request: ExplainRequest) -> dict[str, Any]:
+    """Plain-English explanation of selected text from one answer's passages (not evidence)."""
+    return get_manager().get(session_id).assistant.explain(
+        request.answer_id, request.selected_text, request.follow_up, request.previous)
+
+
+@app.get("/sessions/{session_id}/glossary")
+def get_glossary(session_id: str) -> dict[str, Any]:
+    """Abbreviations found in this chat's papers, with long form and page."""
+    return {"glossary": get_manager().get(session_id).assistant.glossary}

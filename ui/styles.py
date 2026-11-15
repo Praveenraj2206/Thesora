@@ -336,3 +336,5 @@ def build_css(mode: str) -> str:
     variables = "\n".join(f"  --{name}: {value};" for name, value in palette.items())
     body = _BASE_CSS.replace("__FONTS__", FONTS_URL).replace("__SCHEME__", "dark" if mode == DARK else "light")
     return f"<style>\n:root {{\n{variables}\n}}\n{body}\n</style>"
+
+PANEL_CSS = "<style>.block-container, [data-testid='stBottomBlockContainer'] { max-width: 1400px; }</style>"

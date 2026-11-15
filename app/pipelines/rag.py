@@ -77,6 +77,11 @@ def compute_confidence(relevances: Sequence[float], verified_ratio: float, cover
     return round(min(1.0, max(0.0, score)), 3)
 
 
+import uuid  # noqa: E402
+
+from app.generation.viewer import (  # noqa: E402  (v2 N9 / N11)
+    EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits,
+)
 from app.generation.trust import (  # noqa: E402  (v2 batch A)
     REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, sentence_report, short_label,
     silent_papers, verify_table,
@@ -123,6 +128,9 @@ class ResearchAssistant:
         self.nli = nli or NLIChecker()
         self.metadata: dict[str, dict[str, Any]] = {}  # N4, per paper
         self.history: list[dict[str, Any]] = []  # N4 notes export (memory only)
+        self.pdf_bytes: dict[str, bytes] = {}  # N9: original PDF bytes, memory only, freed with the chat
+        self.glossary: list[dict[str, Any]] = []  # N11
+        self.answer_passages: dict[str, list[str]] = {}  # N11: passages behind each answer, by answer_id
         self.embedder = embedder or Embedder()
         self.store = store if store is not None else VectorStore()
         self.retriever = retriever or HybridRetriever(self.store, self.embedder, reranker)
@@ -139,6 +147,8 @@ class ResearchAssistant:
             return {"document": name, "status": "skipped", "pages": 0, "chunks_added": 0}
         pages = load_pdf(pdf_path, doc_id=name)
         self.metadata[name] = extract_metadata(pdf_path, name)
+        self.pdf_bytes[name] = pdf_path.read_bytes()
+        self.glossary.extend(build_glossary(pages, name))
         if self._chunker is None:
             self._chunker = DocumentChunker()
         chunks = self._chunker.chunk_pages(pages)
@@ -207,6 +217,24 @@ class ResearchAssistant:
         self.history.append(answer.to_dict())
         return answer
 
+    def _remember(self, passages: list[str]) -> str:
+        answer_id = uuid.uuid4().hex
+        self.answer_passages[answer_id] = passages[: config.FINAL_TOP_K * 2]
+        return answer_id
+
+    def explain(self, answer_id: str, selected: str, follow_up: Optional[str] = None,
+                previous: Optional[str] = None) -> dict[str, Any]:
+        """N11: plain-English explanation of selected text, using only that answer's passages. Not evidence."""
+        passages = self.answer_passages.get(answer_id)
+        if passages is None:
+            raise ValueError("That answer is no longer available in this chat. Ask the question again.")
+        if not selected.strip():
+            raise ValueError("Select or paste some text to explain.")
+        hits = [dict(g) for g in glossary_hits(selected, self.glossary)]
+        text = self.llm.generate(EXPLAIN_SYSTEM_PROMPT, build_explain_prompt(selected, passages, follow_up, previous),
+                                 config.EXPLAIN_MAX_TOKENS)
+        return {"explanation": text, "glossary": hits, "label": "Plain-English explanation — not evidence"}
+
     def _nli(self) -> Optional[NLIChecker]:
         return self.nli if self.nli.available else None
 
@@ -240,6 +268,7 @@ class ResearchAssistant:
             mode="ask", sentences=sentences,
             silent_papers=sorted(set.intersection(*(set(r.silent_papers) for r in answered))) if answered else [],
             parts=[{"question": p, "answered": not r.abstained, "abstained": r.abstained} for p, r in zip(parts, results)],
+            answer_id=self._remember([t for r in answered for t in self.answer_passages.get(r.answer_id or "", [])]),
         )
         self.history.append(result.to_dict())
         return result
@@ -252,7 +281,8 @@ class ResearchAssistant:
         started = time.perf_counter()
         if len(self.store) == 0:
             return self._abstain(question, config.NO_DOCUMENTS_MESSAGE, [], 0.0, started, "ask")
-        chunks = self.retriever.retrieve(question)
+        sparse = expand_query(question, self.glossary)
+        chunks = self.retriever.retrieve(question, sparse_query=sparse) if sparse else self.retriever.retrieve(question)
         best = chunks[0].relevance if chunks else 0.0
         if not chunks or best < config.ABSTAIN_THRESHOLD:
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, best, started, "ask")
@@ -312,6 +342,7 @@ class ResearchAssistant:
             silent_papers=silent_papers([d["doc_id"] for d in getattr(self.store, "documents", list)()], best_by_doc),
             repair=repair,
             nli_available=nli is not None,
+            answer_id=self._remember([c.chunk.text for c in chunks]),
         )
         self.history.append(result.to_dict())
         return result
