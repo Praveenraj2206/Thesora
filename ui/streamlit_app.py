@@ -163,38 +163,6 @@ def confidence_meter(confidence: float) -> str:
     )
 
 
-def source_card(source: dict[str, Any]) -> str:
-    if source["verified"] is True:
-        badge = '<span class="th-badge good">✓ Verified</span>'
-    elif source["verified"] is None:
-        badge = '<span class="th-badge muted">Cited</span>' if source["cited"] else '<span class="th-badge muted">Context</span>'
-    elif source["cited"]:
-        badge = '<span class="th-badge warn">! Unverified</span>'
-    else:
-        badge = '<span class="th-badge muted">Not cited</span>'
-    location = f"Page {source['page_number']}"
-    if source.get("section"):
-        location += f" · {source['section']}"
-    relevance = min(1.0, max(0.0, float(source.get("relevance", 0.0))))
-    text = " ".join(source["text"].split())
-    if len(text) > SNIPPET_CHARS:
-        text = text[:SNIPPET_CHARS] + "…"
-    return (
-        '<details class="th-src"><summary>'
-        f'<span class="th-src-n">{source["index"]}</span>'
-        f'<span class="th-src-main"><div class="th-src-doc">{esc(source.get("label") or source["doc_id"])}</div>'
-        f'<div class="th-src-loc">{esc(location)}</div></span>'
-        f'{badge}'
-        f'<span class="th-src-rel"><div class="th-src-rel-track"><div class="th-src-rel-fill" '
-        f'style="width:{relevance * PERCENT:.0f}%"></div></div>'
-        f'<div class="th-src-rel-label">rel {relevance:.2f}</div></span>'
-        '<span class="th-chev">▶</span></summary>'
-        + (f'<div class="th-src-loc" style="padding:0 1rem .4rem 3.15rem">Meaning check: {esc(source["meaning"])}</div>'
-           if source.get("meaning") else "")
-        + f'<div class="th-src-text">{esc(text)}</div></details>'
-    )
-
-
 def card() -> Any:
     """A bordered container styled as a card (see `.th-card-mark` in styles.py)."""
     box = st.container(border=True)
@@ -221,11 +189,15 @@ def render_result(result: dict[str, Any]) -> None:
     mode = result.get("mode", "ask")
     with card():
         title = "Comparison" if mode == "synthesize" else "Answer"
-        st.markdown(
+        head, menu = st.columns([12, 1], vertical_alignment="center")
+        head.markdown(
             f'<div class="th-answer-head"><span class="th-answer-label">{title}</span>'
             f'<span class="th-meta">{result.get("latency_s", 0)} s</span></div>',
             unsafe_allow_html=True,
         )
+        if not result["abstained"]:
+            with menu.popover("⋯", help="Checks and explain"):
+                render_answer_menu(result)
         if result["abstained"]:
             st.markdown(
                 notice("warn", "?", "Not answered from your papers", result.get("message") or config.ABSTAIN_MESSAGE),
@@ -249,14 +221,7 @@ def render_result(result: dict[str, Any]) -> None:
                         unsafe_allow_html=True)
         render_trust_extras(result)
         st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
-        sources = result.get("sources", [])
-        render_panel_buttons(result, sources)
-        if sources:
-            st.markdown(
-                f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>'
-                + "".join(source_card(s) for s in sources),
-                unsafe_allow_html=True,
-            )
+        render_sources(result, result.get("sources", []))
 
 
 def _key() -> str:
@@ -264,21 +229,66 @@ def _key() -> str:
     return f"btn{st.session_state._btn}"
 
 
-def render_panel_buttons(result: dict[str, Any], sources: list[dict[str, Any]]) -> None:
-    """N9/N11 entry points: open a cited page in the side panel, or explain the answer."""
-    cited = [s for s in sources if s.get("cited")][:4]
-    if result.get("abstained") or not (cited or result.get("answer_id")):
+SOURCE_BADGE = {True: "✓ Verified", None: "Cited", False: "! Unverified"}
+
+
+def _source_badge(source: dict[str, Any]) -> str:
+    if source["verified"] is None:
+        return "Cited" if source["cited"] else "Context"
+    if not source["cited"]:
+        return "Not cited"
+    return SOURCE_BADGE[bool(source["verified"])]
+
+
+def _open_panel(**panel: Any) -> None:
+    st.session_state.panel = panel
+    st.rerun()
+
+
+def render_sources(result: dict[str, Any], sources: list[dict[str, Any]]) -> None:
+    """One compact dropdown per source; inside: the passage, then 📄 Open page and 💡 Explain."""
+    if not sources:
         return
-    cols = st.columns(len(cited) + (1 if result.get("answer_id") else 0))
-    for col, src in zip(cols, cited):
-        if col.button(f"📄 [{src['index']}] p.{src['page_number']}", key=_key(), help="Open this page with the passage highlighted"):
-            st.session_state.panel = {"tab": "citation", "doc_id": src["doc_id"], "page": src["page_number"],
-                                      "passage": src["text"], "label": src.get("label") or src["doc_id"]}
-            st.rerun()
-    if result.get("answer_id") and cols[-1].button("💡 Explain", key=_key(), help="Plain-English explanation"):
-        st.session_state.panel = {"tab": "explain", "answer_id": result["answer_id"],
-                                  "text": re.sub(r"\[\d+\]", "", result.get("answer", ""))[:1500]}
-        st.rerun()
+    st.markdown(f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>', unsafe_allow_html=True)
+    for src in sources:
+        rel = min(1.0, max(0.0, float(src.get("relevance", 0.0))))
+        label = f"[{src['index']}]  {src.get('label') or src['doc_id']}  ·  {_source_badge(src)}  ·  rel {rel:.2f}"
+        with st.expander(label):
+            text = " ".join(src["text"].split())
+            st.markdown(f'<div class="th-src-text" style="padding:0;border:0">'
+                        f'{esc(text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + "…")}</div>',
+                        unsafe_allow_html=True)
+            if src.get("meaning"):
+                st.caption(f"Meaning check: {src['meaning']}")
+            open_col, explain_col, _ = st.columns([1, 1, 2])
+            if open_col.button("📄 Open page", key=_key(), help="Show this page with the passage highlighted"):
+                _open_panel(tab="citation", doc_id=src["doc_id"], page=src["page_number"], passage=src["text"],
+                            label=src.get("label") or src["doc_id"])
+            if result.get("answer_id") and explain_col.button("💡 Explain", key=_key(), help="Explain this passage"):
+                _open_panel(tab="explain", answer_id=result["answer_id"], text=text[:1500])
+
+
+def render_answer_menu(result: dict[str, Any]) -> None:
+    """The ⋯ menu: sentence check, table check and explain-the-answer, shown only when asked."""
+    sentences = result.get("sentences") or []
+    if sentences:
+        st.markdown("**Sentence check**")
+        for item in sentences:
+            st.markdown(f"{STATUS_ICON.get(item['status'], item['status'])} · {esc(item['text'])}")
+        if result.get("nli_available") is False:
+            st.caption("Checked by wording only (meaning check is off).")
+    cells = result.get("table_cells") or []
+    if cells:
+        st.markdown("**Table check: is each cell in the paper?**")
+        for cell in cells:
+            ev = ", ".join(f"[{e['passage']}] p.{e['page']}" for e in cell["evidence"])
+            st.markdown(f"{STATUS_ICON.get(cell['status'], cell['status'])} · {esc(cell['paper'])} · {esc(cell['column'])}"
+                        + (f" — {ev}" if ev else ""))
+    if result.get("answer_id") and st.button("💡 Explain this answer", key=_key(), use_container_width=True):
+        _open_panel(tab="explain", answer_id=result["answer_id"],
+                    text=re.sub(r"\[\d+\]", "", result.get("answer", ""))[:1500])
+    if not (sentences or cells or result.get("answer_id")):
+        st.caption("No extra checks for this answer.")
 
 
 def render_panel(panel: dict[str, Any]) -> None:
@@ -349,30 +359,14 @@ STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Un
 
 
 def render_trust_extras(result: dict[str, Any]) -> None:
-    """Batch A: repair note, sentence check, verified table cells and silent papers (icon + text, never colour only)."""
+    """Always visible but compact: part chips, repair note and silent papers. Detailed checks live in the ⋯ menu."""
     for part in result.get("parts") or []:
         icon = "✓ Answered" if part["answered"] else "✗ Not found in your papers"
-        st.markdown(f"**{icon}** · {esc(part['question'])}")
+        st.markdown(f'<div class="th-chip">{icon} · {esc(part["question"])}</div>', unsafe_allow_html=True)
     repair = result.get("repair") or {}
     if repair.get("removed"):
         n = repair["removed"]
-        st.markdown(notice("info", "i", f"{n} claim{'s' if n != 1 else ''} removed",
-                           "It could not be verified against the papers, even after one stricter retry."),
-                    unsafe_allow_html=True)
-    sentences = result.get("sentences") or []
-    if sentences:
-        with st.expander("Sentence check"):
-            for item in sentences:
-                st.markdown(f"**{STATUS_ICON.get(item['status'], item['status'])}** · {esc(item['text'])}")
-            if result.get("nli_available") is False:
-                st.caption("Meaning check is off; sentences were checked by wording only.")
-    cells = result.get("table_cells") or []
-    if cells:
-        with st.expander("Table check: is each cell in the paper?"):
-            for cell in cells:
-                ev = ", ".join(f"[{e['passage']}] p.{e['page']}" for e in cell["evidence"])
-                st.markdown(f"**{STATUS_ICON.get(cell['status'], cell['status'])}** · {esc(cell['paper'])} · "
-                            f"{esc(cell['column'])}" + (f" — evidence {ev}" if ev else ""))
+        st.caption(f"ⓘ {n} claim{'s' if n != 1 else ''} removed because it could not be verified against the papers.")
     if result.get("silent_papers"):
         st.caption("No evidence from: " + ", ".join(result["silent_papers"]) + " — silence is not disagreement.")
 
@@ -670,7 +664,8 @@ def main() -> None:
         st.markdown(notice("warn", "!", "That chat had ended", "The backend restarted, so a new empty chat was started. "
                            "Upload your PDFs again."), unsafe_allow_html=True)
 
-    controls, refine_toggle = st.columns([3, 2], vertical_alignment="center")
+    modebar = st.container(key="th_modebar")  # stays pinned at the top while the chat scrolls
+    controls, refine_toggle = modebar.columns([3, 2], vertical_alignment="center")
     mode_label = controls.segmented_control("Mode", list(MODES), default=MODE_ASK_LABEL, key="mode_label",
                                             label_visibility="collapsed") or MODE_ASK_LABEL
     mode = MODES[mode_label]
@@ -699,7 +694,7 @@ def main() -> None:
         if show_refiner:
             refiner_panel(mode)
     if side_col is not None:
-        with side_col:
+        with side_col, st.container(key="th_sidepanel"):  # follows the reader down the chat
             render_panel(panel)
 
 

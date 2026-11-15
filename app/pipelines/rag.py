@@ -262,6 +262,8 @@ class ResearchAssistant:
             return {"topic": topic, "rows": [], "conflicts": [], "nli_available": False, "message": config.NO_DOCUMENTS_MESSAGE}
         best: dict[str, Any] = {}
         for c in self.retriever.retrieve_across_documents(topic):
+            if re.search(r"reference|bibliograph|works cited", c.chunk.section or "", re.IGNORECASE):
+                continue  # a reference list quotes other papers, not this paper's position
             if c.chunk.doc_id not in best or c.relevance > best[c.chunk.doc_id].relevance:
                 best[c.chunk.doc_id] = c
         rows = [{"doc_id": d, "label": short_label(self.metadata.get(d), c.chunk.page_number, c.chunk.section),

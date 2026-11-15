@@ -22,7 +22,7 @@
       "all": {
         "n": 20,
         "hit": 0.75,
-        "mrr": 0.658
+        "mrr": 0.654
       },
       "exact": {
         "n": 10,
@@ -32,14 +32,14 @@
       "paraphrase": {
         "n": 10,
         "hit": 0.5,
-        "mrr": 0.367
+        "mrr": 0.358
       }
     },
     "hybrid (RRF)": {
       "all": {
         "n": 20,
-        "hit": 0.75,
-        "mrr": 0.637
+        "hit": 0.8,
+        "mrr": 0.647
       },
       "exact": {
         "n": 10,
@@ -48,8 +48,8 @@
       },
       "paraphrase": {
         "n": 10,
-        "hit": 0.5,
-        "mrr": 0.375
+        "hit": 0.6,
+        "mrr": 0.395
       }
     },
     "hybrid + rerank": {
@@ -109,8 +109,7 @@
       "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
       "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
       "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
-      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])"
+      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
     ],
     "hybrid + rerank": [
       "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
@@ -128,5 +127,5 @@
       "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf'])"
     ]
   },
-  "weak_chunk_rate": 0.68
+  "weak_chunk_rate": 0.65
 }

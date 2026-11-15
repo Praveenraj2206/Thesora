@@ -405,6 +405,26 @@ ui/styles.py               light and dark themes (all colours and CSS)
 Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off by default.
 
 <details>
+<summary><b>Using the v2 interface (where everything is)</b></summary>
+
+<br>
+
+- **Mode bar** (Ask a question · Compare papers · Agree? · ✨ Prompt refiner) stays pinned at the top while you scroll.
+- **Each source** is a one-line dropdown: `[n] Smith et al., 2023 · p.4 · Section · ✓ Verified · rel 0.98`.
+  Open it to read the passage, then **📄 Open page** (the page opens on the right with the passage highlighted) or
+  **💡 Explain** (plain-English explanation of that passage).
+- **⋯** next to "Answer" opens the extra checks only when you want them: **Sentence check**, **Table check**
+  (comparisons) and **💡 Explain this answer**.
+- **Side panel** (Citation / Explain tabs) stays beside the answers as you scroll; **✕ Close panel** hides it.
+- Small notes under an answer: part chips for multi-part questions, "N claims removed" after self-repair, and
+  "No evidence from … — silence is not disagreement".
+- **Question suggestions** = **✨ Prompt refiner**: switch it on, type a rough question, press **✨ Refine**, then
+  **Use suggestion**, **Edit it** or **Send my original**.
+- Sidebar: **Glossary**, **Download .bib**, **Download notes (.md)**.
+
+</details>
+
+<details>
 <summary><b>N1 · Tables in PDFs become citable passages</b> — ✅</summary>
 
 <br>
