@@ -176,14 +176,16 @@ def source_card(source: dict[str, Any]) -> str:
     return (
         '<details class="th-src"><summary>'
         f'<span class="th-src-n">{source["index"]}</span>'
-        f'<span class="th-src-main"><div class="th-src-doc">{esc(source["doc_id"])}</div>'
+        f'<span class="th-src-main"><div class="th-src-doc">{esc(source.get("label") or source["doc_id"])}</div>'
         f'<div class="th-src-loc">{esc(location)}</div></span>'
         f'{badge}'
         f'<span class="th-src-rel"><div class="th-src-rel-track"><div class="th-src-rel-fill" '
         f'style="width:{relevance * PERCENT:.0f}%"></div></div>'
         f'<div class="th-src-rel-label">rel {relevance:.2f}</div></span>'
         '<span class="th-chev">▶</span></summary>'
-        f'<div class="th-src-text">{esc(text)}</div></details>'
+        + (f'<div class="th-src-loc" style="padding:0 1rem .4rem 3.15rem">Meaning check: {esc(source["meaning"])}</div>'
+           if source.get("meaning") else "")
+        + f'<div class="th-src-text">{esc(text)}</div></details>'
     )
 
 
@@ -239,6 +241,7 @@ def render_result(result: dict[str, Any]) -> None:
             numbers = ", ".join(f"[{n}]" for n in result["invalid_citations"])
             st.markdown(notice("bad", "×", f"Invalid citation {numbers}", "The model cited a passage that does not exist."),
                         unsafe_allow_html=True)
+        render_trust_extras(result)
         st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
         sources = result.get("sources", [])
         if sources:
@@ -247,6 +250,37 @@ def render_result(result: dict[str, Any]) -> None:
                 + "".join(source_card(s) for s in sources),
                 unsafe_allow_html=True,
             )
+
+
+STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Unverified", "uncited": "○ Uncited",
+               "supported": "✓ Supported", "partly": "~ Partly supported", "not_found": "✗ Not found in text",
+               "not_stated": "– Not stated"}
+
+
+def render_trust_extras(result: dict[str, Any]) -> None:
+    """Batch A: repair note, sentence check, verified table cells and silent papers (icon + text, never colour only)."""
+    repair = result.get("repair") or {}
+    if repair.get("removed"):
+        n = repair["removed"]
+        st.markdown(notice("info", "i", f"{n} claim{'s' if n != 1 else ''} removed",
+                           "It could not be verified against the papers, even after one stricter retry."),
+                    unsafe_allow_html=True)
+    sentences = result.get("sentences") or []
+    if sentences:
+        with st.expander("Sentence check"):
+            for item in sentences:
+                st.markdown(f"**{STATUS_ICON.get(item['status'], item['status'])}** · {esc(item['text'])}")
+            if result.get("nli_available") is False:
+                st.caption("Meaning check is off; sentences were checked by wording only.")
+    cells = result.get("table_cells") or []
+    if cells:
+        with st.expander("Table check: is each cell in the paper?"):
+            for cell in cells:
+                ev = ", ".join(f"[{e['passage']}] p.{e['page']}" for e in cell["evidence"])
+                st.markdown(f"**{STATUS_ICON.get(cell['status'], cell['status'])}** · {esc(cell['paper'])} · "
+                            f"{esc(cell['column'])}" + (f" — evidence {ev}" if ev else ""))
+    if result.get("silent_papers"):
+        st.caption("No evidence from: " + ", ".join(result["silent_papers"]) + " — silence is not disagreement.")
 
 
 def render_turn(turn: dict[str, Any]) -> None:
@@ -339,6 +373,10 @@ def sidebar() -> list[dict[str, Any]]:
             accept_multiple_files=True,
             key=f"uploader_{st.session_state.uploader_key}",
         )
+        for f in files or []:
+            if f.size > config.LARGE_FILE_WARN_MB * 1024 * 1024:
+                st.markdown(notice("warn", "!", f"{f.name}: large file ({f.size / 1048576:.0f} MB)",
+                                   "It may use more memory and take longer to read."), unsafe_allow_html=True)
         too_many = bool(files) and len(files) > MAX_FILES_PER_REQUEST
         if too_many:
             st.markdown(
@@ -376,6 +414,15 @@ def sidebar() -> list[dict[str, Any]]:
         else:
             st.markdown('<div class="th-empty">No papers yet. Every new chat starts empty.</div>',
                         unsafe_allow_html=True)
+        if documents:
+            try:
+                bib_resp = requests.get(f"{st.session_state.api_url}{session_path('/bibtex')}", timeout=HEALTH_TIMEOUT_S)
+                notes_resp = requests.get(f"{st.session_state.api_url}{session_path('/export')}", timeout=HEALTH_TIMEOUT_S)
+                st.download_button("Download .bib", bib_resp.text, file_name="thesora.bib", use_container_width=True)
+                st.download_button("Download notes (.md)", notes_resp.text, file_name="thesora_notes.md",
+                                   use_container_width=True)
+            except requests.exceptions.RequestException:
+                st.caption("Exports are unavailable while the backend is unreachable.")
         st.markdown(
             f'<div class="th-footer">Max {MAX_FILES_PER_REQUEST} PDFs per upload · {config.MAX_UPLOAD_MB} MB each.<br>'
             "Papers live only in this chat's memory; nothing is saved to disk.</div>",

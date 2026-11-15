@@ -43,3 +43,6 @@ models/
 # Generated evaluation outputs
 data/eval/results.json
 data/eval/verify_results.json
+
+# v2 patch output
+dist/

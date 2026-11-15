@@ -70,7 +70,7 @@ HEADING_SIZE_RATIO = _env_float("HEADING_SIZE_RATIO", 1.15)
 HEADING_MIN_CHARS = 3
 HEADING_MAX_CHARS = 120
 HEADING_BOLD_MAX_CHARS = 80
-MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 50)  # per file
+MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 100)  # per file
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 PDF_MAGIC = b"%PDF"
 MAX_FILENAME_CHARS = 150
@@ -159,3 +159,17 @@ CONTEXT_PRECISION_SIM_THRESHOLD = _env_float("CONTEXT_PRECISION_SIM_THRESHOLD", 
 CONTEXT_RECALL_SIM_THRESHOLD = _env_float("CONTEXT_RECALL_SIM_THRESHOLD", 0.5)
 JUDGE_CONTEXT_CHARS = 6000
 EVAL_MIN_SENTENCE_CHARS = 15
+
+# --------------------------------------------------------------------------- v2 batch A (trust)
+NLI_ENABLED = _env_str("NLI_ENABLED", "0") == "1"  # N8; off by default: smallest model is 283 MB (> 200 MB budget)
+NLI_MODEL = _env_str("NLI_MODEL", "cross-encoder/nli-deberta-v3-xsmall")
+NLI_PASS = _env_float("NLI_PASS", 0.5)  # entailment probability for PASS
+NLI_FAIL_CONTRADICTION = _env_float("NLI_FAIL_CONTRADICTION", 0.5)  # contradiction probability for FAIL
+NLI_PREMISE_SENTENCES = _env_int("NLI_PREMISE_SENTENCES", 2)
+SENTENCE_WEAK_SCORE = _env_float("SENTENCE_WEAK_SCORE", 60.0)  # word score for "weak" (below = unverified)
+SELF_REPAIR = _env_str("SELF_REPAIR", "1") == "1"  # one stricter retry, then drop unsupported sentences (N10)
+REPAIR_MAX_TOKENS = _env_int("REPAIR_MAX_TOKENS", 600)
+METADATA_TITLE_MAX_CHARS = 250
+METADATA_AUTHOR_MAX_CHARS = 300
+LARGE_FILE_WARN_MB = _env_int("LARGE_FILE_WARN_MB", 5)  # N7: UI warns above this size
+MAX_SESSION_PDF_MB = _env_int("MAX_SESSION_PDF_MB", 400)  # N7: total PDF size allowed per chat

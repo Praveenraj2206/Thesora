@@ -76,6 +76,12 @@ def compute_confidence(relevances: Sequence[float], verified_ratio: float, cover
     return round(min(1.0, max(0.0, score)), 3)
 
 
+from app.generation.trust import (  # noqa: E402  (v2 batch A)
+    REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, sentence_report, short_label,
+    silent_papers, verify_table,
+)
+
+
 class ResearchAssistant:
     """High-level API used by the FastAPI app, CLI scripts and the evaluator.
 
@@ -91,7 +97,11 @@ class ResearchAssistant:
         llm: Optional[BaseLLM] = None,
         reranker: Optional[Reranker] = None,
         chunker: Optional[DocumentChunker] = None,
+        nli: Optional[NLIChecker] = None,
     ) -> None:
+        self.nli = nli or NLIChecker()
+        self.metadata: dict[str, dict[str, Any]] = {}  # N4, per paper
+        self.history: list[dict[str, Any]] = []  # N4 notes export (memory only)
         self.embedder = embedder or Embedder()
         self.store = store if store is not None else VectorStore()
         self.retriever = retriever or HybridRetriever(self.store, self.embedder, reranker)
@@ -107,6 +117,7 @@ class ResearchAssistant:
         if self.store.has_document(name):
             return {"document": name, "status": "skipped", "pages": 0, "chunks_added": 0}
         pages = load_pdf(pdf_path, doc_id=name)
+        self.metadata[name] = extract_metadata(pdf_path, name)
         if self._chunker is None:
             self._chunker = DocumentChunker()
         chunks = self._chunker.chunk_pages(pages)
@@ -143,8 +154,7 @@ class ResearchAssistant:
         self.retriever.warm_up()
 
     # ------------------------------------------------------------------ helpers
-    @staticmethod
-    def _sources(chunks: Sequence[RetrievedChunk], cited: set[int]) -> list[Source]:
+    def _sources(self, chunks: Sequence[RetrievedChunk], cited: set[int]) -> list[Source]:
         return [
             Source(
                 index=n,
@@ -155,6 +165,7 @@ class ResearchAssistant:
                 text=item.chunk.text,
                 relevance=round(item.relevance, 4),
                 cited=n in cited,
+                label=short_label(self.metadata.get(item.chunk.doc_id), item.chunk.page_number, item.chunk.section),
             )
             for n, item in enumerate(chunks, start=1)
         ]
@@ -162,7 +173,7 @@ class ResearchAssistant:
     def _abstain(
         self, question: str, message: str, chunks: Sequence[RetrievedChunk], confidence: float, started: float, mode: str
     ) -> Answer:
-        return Answer(
+        answer = Answer(
             question=question,
             answer="",
             abstained=True,
@@ -172,6 +183,11 @@ class ResearchAssistant:
             latency_s=round(time.perf_counter() - started, 3),
             mode=mode,
         )
+        self.history.append(answer.to_dict())
+        return answer
+
+    def _nli(self) -> Optional[NLIChecker]:
+        return self.nli if self.nli.available else None
 
     # ------------------------------------------------------------------ ask
     def ask(self, question: str) -> Answer:
@@ -191,14 +207,32 @@ class ResearchAssistant:
         if is_insufficient(raw):
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
 
-        verification: VerificationResult = verify_citations(
-            raw, {n: item.chunk.text for n, item in enumerate(chunks, start=1)}
-        )
+        texts = {n: item.chunk.text for n, item in enumerate(chunks, start=1)}
+        nli = self._nli()
+        verification: VerificationResult = verify_citations(raw, texts)
+        report = sentence_report(raw, texts, nli)
+        repair = None
+        if config.SELF_REPAIR and any(r["status"] == "unverified" for r in report):
+            before = sum(r["status"] == "unverified" for r in report)
+            try:
+                retry = self.llm.generate(REPAIR_SYSTEM_PROMPT, build_ask_prompt(question, chunks), config.REPAIR_MAX_TOKENS)
+                if not is_insufficient(retry):
+                    raw, report = retry, sentence_report(retry, texts, nli)
+            except Exception as exc:  # repair is best effort; keep the first answer
+                logger.warning("Self-repair call failed: %s", exc)
+            after = sum(r["status"] == "unverified" for r in report)
+            raw, removed = drop_unsupported(raw, report)
+            report = [r for r in report if r["status"] != "unverified"]
+            repair = {"attempted": True, "removed": removed, "before_unverified": before, "after_unverified": after}
+            if not raw.strip():
+                return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
+            verification = verify_citations(raw, texts)
         sources = self._sources(chunks, set(verification.cited))
         for source in sources:
             check = verification.per_source.get(source.index)
             source.verified = bool(check and check.verified)
             source.match_score = check.match_score if check else None
+            source.meaning = next((r["meaning"] for r in report if source.index in r["citations"] and r["meaning"]), None)
         message = None
         if not verification.cited:
             message = NO_CITATIONS_NOTE
@@ -206,7 +240,10 @@ class ResearchAssistant:
             message = "Some citations could not be verified against the source text: " + ", ".join(
                 f"[{n}]" for n in verification.unverified
             )
-        return Answer(
+        best_by_doc: dict[str, float] = {}
+        for c in chunks:
+            best_by_doc[c.chunk.doc_id] = max(best_by_doc.get(c.chunk.doc_id, 0.0), c.relevance)
+        result = Answer(
             question=question,
             answer=raw,
             abstained=False,
@@ -217,7 +254,13 @@ class ResearchAssistant:
             message=message,
             latency_s=round(time.perf_counter() - started, 3),
             mode="ask",
+            sentences=report,
+            silent_papers=silent_papers([d["doc_id"] for d in getattr(self.store, "documents", list)()], best_by_doc),
+            repair=repair,
+            nli_available=nli is not None,
         )
+        self.history.append(result.to_dict())
+        return result
 
     # ------------------------------------------------------------------ synthesize
     def synthesize(self, topic: str) -> Answer:
@@ -243,7 +286,10 @@ class ResearchAssistant:
         cited = {n for n in extract_cited_numbers(raw) if 1 <= n <= len(chunks)}
         invalid = sorted(n for n in extract_cited_numbers(raw) if not 1 <= n <= len(chunks))
         sources = self._sources(chunks, cited)
-        return Answer(
+        nli = self._nli()
+        passages = [{"index": n, "doc_id": c.chunk.doc_id, "page": c.chunk.page_number, "section": c.chunk.section,
+                     "text": c.chunk.text} for n, c in enumerate(chunks, start=1)]
+        result = Answer(
             question=topic,
             answer=raw,
             abstained=False,
@@ -255,7 +301,11 @@ class ResearchAssistant:
             message=None if cited else NO_CITATIONS_NOTE,
             latency_s=round(time.perf_counter() - started, 3),
             mode="synthesize",
+            table_cells=verify_table(raw, passages, nli),
+            nli_available=nli is not None,
         )
+        self.history.append(result.to_dict())
+        return result
 
 
 def assistant_from_folder(folder: str | Path = config.PAPERS_DIR) -> tuple[ResearchAssistant, list[dict[str, Any]]]:

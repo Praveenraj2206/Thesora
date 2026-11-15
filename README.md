@@ -282,7 +282,7 @@ often lead to unsupported claims, at a small cost in recall on reworded question
 ## Chat rules
 
 - **At most 10 PDFs per upload** (`MAX_FILES_PER_REQUEST`). An 11-file request is rejected with HTTP 400
-  before anything is read, and the UI blocks it too. Each file can be at most 50 MB (`MAX_UPLOAD_MB`).
+  before anything is read, and the UI blocks it too. Each file can be at most 100 MB (`MAX_UPLOAD_MB`, now 100 MB; `MAX_SESSION_PDF_MB` 400 MB per chat).
 - **Every chat starts empty.** Each chat has its own in-memory index. Opening the UI, refreshing the page
   or pressing **New chat** starts a new chat, so earlier PDFs and references are never used.
 - **Nothing is saved to disk.** Uploads are read from a temporary folder that is deleted straight away.

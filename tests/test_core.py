@@ -5,7 +5,11 @@ No Ollama, FAISS or model downloads are needed (components are stubbed).
 """
 from __future__ import annotations
 
+import os
 import sys
+
+os.environ.setdefault("NLI_ENABLED", "0")  # no model download in unit tests
+os.environ.setdefault("SELF_REPAIR", "0")  # legacy tests check unverified flags; repair has its own tests
 import unittest
 from pathlib import Path
 

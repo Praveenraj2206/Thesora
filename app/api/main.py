@@ -294,12 +294,20 @@ def ingest(session_id: str, files: list[UploadFile] = File(default=[])) -> JSONR
     check_file_count(len(files))
     session = get_manager().get(session_id)
     results: list[dict[str, Any]] = []
+    session_limit = config.MAX_SESSION_PDF_MB * BYTES_PER_MB
     with session.lock, tempfile.TemporaryDirectory(prefix="thesora-") as temp:
         for upload in files:
             label = Path(upload.filename or "unnamed").name
             try:
                 path = save_upload(upload, Path(temp))
-                results.append(session.assistant.ingest_pdf(path, doc_id=path.name))
+                size = path.stat().st_size
+                if getattr(session, "pdf_bytes", 0) + size > session_limit:
+                    raise UploadError(f"{label}: this chat already holds close to {config.MAX_SESSION_PDF_MB} MB of PDFs. "
+                                      "Start a new chat for more papers.")
+                result = session.assistant.ingest_pdf(path, doc_id=path.name)
+                if result["status"] == "ingested":
+                    session.pdf_bytes = getattr(session, "pdf_bytes", 0) + size
+                results.append(result)
             except (UploadError, PDFLoadError) as exc:
                 results.append({"document": label, "status": "failed", "error": str(exc)})
             except ThesoraError as exc:
@@ -344,3 +352,50 @@ def refine(session_id: str, request: RefineRequest) -> dict[str, Any]:
     manager = get_manager()
     documents = [doc["doc_id"] for doc in manager.get(session_id).assistant.documents()]
     return refine_prompt(manager.llm, request.text, request.mode, documents).to_dict()
+
+
+# ----------------------------------------------------------------------------- v2 batch A: metadata, BibTeX, notes
+class MetadataPatch(BaseModel):
+    """Body of PATCH /sessions/{id}/documents/{doc_id}/metadata; only the given fields change."""
+
+    title: Optional[str] = Field(default=None, max_length=MAX_TEXT_CHARS)
+    authors: Optional[list[str]] = None
+    year: Optional[int] = Field(default=None, ge=1000, le=2999)
+    doi: Optional[str] = Field(default=None, max_length=200)
+
+
+@app.get("/sessions/{session_id}/metadata")
+def list_metadata(session_id: str) -> dict[str, Any]:
+    """Auto-detected (or user-corrected) title, authors, year and DOI per paper."""
+    return {"metadata": list(get_manager().get(session_id).assistant.metadata.values())}
+
+
+@app.patch("/sessions/{session_id}/documents/{doc_id}/metadata")
+def patch_metadata(session_id: str, doc_id: str, patch: MetadataPatch) -> dict[str, Any]:
+    """Correct a paper's citation details."""
+    meta = get_manager().get(session_id).assistant.metadata.get(doc_id)
+    if meta is None:
+        raise ValueError(f"No paper named '{doc_id}' in this chat.")
+    for key, value in patch.model_dump(exclude_none=True).items():
+        meta[key] = value
+    meta["edited"] = True
+    return meta
+
+
+@app.get("/sessions/{session_id}/bibtex")
+def get_bibtex(session_id: str):
+    """BibTeX for the papers in this chat (no LLM calls)."""
+    from fastapi.responses import PlainTextResponse
+    from app.generation.trust import bibtex
+
+    return PlainTextResponse(bibtex(list(get_manager().get(session_id).assistant.metadata.values())),
+                             media_type="application/x-bibtex")
+
+
+@app.get("/sessions/{session_id}/export")
+def export_notes(session_id: str):
+    """Markdown research notes: questions, answers and verified citations only (no LLM calls)."""
+    from fastapi.responses import PlainTextResponse
+    from app.generation.trust import notes_markdown
+
+    return PlainTextResponse(notes_markdown(get_manager().get(session_id).assistant.history), media_type="text/markdown")
