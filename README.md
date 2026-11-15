@@ -9,28 +9,92 @@ keys, no cloud. Built with Python 3.11, FastAPI and Streamlit, and tested on Win
 
 ---
 
-## Why Thesora? (what's wrong with "naive" RAG)
+## What Thesora does (Phase 1)
 
-A basic Retrieval-Augmented Generation (RAG) system finds a few similar-looking chunks and lets the model
-write an answer. That causes three problems: it misses passages that use exact terms, it makes up claims
-the papers don't support, and it answers confidently even when the papers say nothing about the question.
-Thesora adds five improvements and two extras to fix this:
+A basic Retrieval-Augmented Generation (RAG) system finds a few similar-looking chunks and lets the model write an answer: it misses exact terms, makes up unsupported claims, and answers confidently even when the papers say nothing. Thesora fixes this with five improvements and four extras. Click each to open it.
 
-| # | Feature | What it does for you | Where |
-|---|---|---|---|
-| F1 | **Hybrid retrieval** | Searches by keywords (BM25) *and* by meaning (embeddings), then merges both lists with Reciprocal Rank Fusion (k=60), so exact terms like "5-4-3-2-1" and reworded questions both work | `app/retrieval/retriever.py` |
-| F2 | **Cross-encoder reranking** | Re-scores the top candidates with `ms-marco-MiniLM-L-6-v2`, keeps the best 5 and drops passages below a relevance floor (0.1) | `app/retrieval/retriever.py` |
-| F3 | **Citation verification** | Checks every `[n]` claim against passage *n* (fuzzy match + word recall + a number guard), and marks each source ✅ verified or ⚠️ unverified | `app/generation/verifier.py` |
-| F4 | **Abstention + confidence** | If no passage is relevant enough (< 0.35), it refuses *without calling the LLM*, and every answer gets a confidence score | `app/pipelines/rag.py` |
-| F5 | **Evaluation harness** | Measures faithfulness, context precision/recall, answer relevancy, abstention accuracy and retrieval hit rate, and writes `results.json` | `scripts/evaluate.py` |
-| ★ | **Cross-paper synthesis** | Builds a comparison table with one row per paper, plus a "Research Gaps" section | `POST /sessions/{id}/synthesize` |
-| ★ | **Isolated chats + upload limit** | Every chat starts empty and only sees its own PDFs; at most 10 PDFs per upload | `app/pipelines/sessions.py`, `app/api/main.py` |
-| ★ | **Prompt refiner (optional)** | One click rewrites a rough question ("brain parts deja vu") into a precise one that retrieves better; you choose whether to send it. Adapted from [prompt-master](https://github.com/nidhinjs/prompt-master) | `app/generation/prompt_refiner.py`, `POST /sessions/{id}/refine` |
-| ★ | **Research-grade interface** | A calm "paper" light theme with a one-click dark theme, citation badges, source cards with the exact passage, and a confidence meter | `ui/streamlit_app.py`, `ui/styles.py` |
+<details>
+<summary><b>F1 · Hybrid retrieval</b></summary>
 
-**Pipeline:** PDF → PyMuPDF text + section detection → chunks (512 characters, 100 overlap) →
-all-MiniLM-L6-v2 embeddings → FAISS + BM25 → RRF fusion → cross-encoder rerank → Ollama →
-citation verification → FastAPI → Streamlit.
+<br>
+
+Searches by keywords (BM25, top 20) **and** by meaning (all-MiniLM-L6-v2 embeddings in FAISS, top 20), then merges both lists with Reciprocal Rank Fusion (k = 60) into 8 candidates. Exact terms such as "5-4-3-2-1" and reworded questions both work. Code: `app/retrieval/retriever.py`.
+
+</details>
+
+<details>
+<summary><b>F2 · Cross-encoder reranking</b></summary>
+
+<br>
+
+A cross-encoder (`ms-marco-MiniLM-L-6-v2`) re-scores the 8 candidates; the best 5 are kept and any passage below a relevance floor of 0.1 is dropped, so junk never reaches the model. Code: `app/retrieval/retriever.py`.
+
+</details>
+
+<details>
+<summary><b>F3 · Citation verification</b></summary>
+
+<br>
+
+Every `[n]` claim is checked against passage *n* with fuzzy matching and content-word recall; every number in a claim must appear in the passage (number guard). Sources show ✓ Verified or ! Unverified. Code: `app/generation/verifier.py`.
+
+</details>
+
+<details>
+<summary><b>F4 · Abstention + confidence</b></summary>
+
+<br>
+
+If no passage is relevant enough (best relevance below 0.35) Thesora refuses **without calling the model**; it also refuses when the model says the context is insufficient. Every answer gets a confidence score (relevance, verified share and claim coverage). Code: `app/pipelines/rag.py`.
+
+</details>
+
+<details>
+<summary><b>F5 · Evaluation harness</b></summary>
+
+<br>
+
+`scripts/evaluate.py` measures faithfulness, context precision and recall, answer relevancy, abstention accuracy and retrieval hit rate, and writes `results.json`. `scripts/compare_retrievers.py` compares naive dense search with every improvement.
+
+</details>
+
+<details>
+<summary><b>Extra · Cross-paper synthesis</b></summary>
+
+<br>
+
+**Compare papers** mode builds a table with one row per paper plus a **Research Gaps** section; passages are picked round-robin so every paper is covered.
+
+</details>
+
+<details>
+<summary><b>Extra · Isolated chats and upload limit</b></summary>
+
+<br>
+
+Every chat starts empty and only sees its own PDFs (in memory, never saved to disk); at most 10 PDFs per upload. Code: `app/pipelines/sessions.py`, `app/api/main.py`.
+
+</details>
+
+<details>
+<summary><b>Extra · Prompt refiner (question suggestions)</b></summary>
+
+<br>
+
+Optional **✨ Prompt refiner**: rewrites a rough question into a precise one that retrieves better; you choose whether to send it. Adapted from prompt-master. Code: `app/generation/prompt_refiner.py`.
+
+</details>
+
+<details>
+<summary><b>Extra · Research-grade interface</b></summary>
+
+<br>
+
+A calm "paper" light theme with a one-click dark theme, citation badges, source dropdowns and a confidence meter. Code: `ui/streamlit_app.py`, `ui/styles.py`.
+
+</details>
+
+**Pipeline:** PDF → PyMuPDF text + section detection → chunks (512 characters, 100 overlap) → all-MiniLM-L6-v2 embeddings → FAISS + BM25 → RRF fusion → cross-encoder rerank → Ollama → citation verification → FastAPI → Streamlit.
 
 ---
 
@@ -38,11 +102,11 @@ citation verification → FastAPI → Streamlit.
 
 | Contributor | Contribution |
 |---|---|
-| **Praveen Raj S** | Citation verification (F3); the 10-PDF upload limit; isolated new-chat sessions; the optional prompt refiner (adapted from prompt-master) |
-| **ReddyMasi Manasa** | Major features: hybrid retrieval (F1), cross-encoder reranking (F2), abstention + confidence (F4), evaluation harness (F5), cross-paper comparison table |
-| **Pramod V** | Literature survey; research-gap analysis (the "Research Gaps" section of cross-paper synthesis); the user interface with light and dark themes |
-| **E Akhila Reddy** | RIO internship team member |
-| **Kushal U G** | RIO internship team member |
+| **Praveen Raj S** | Hybrid retrieval (F1); abstention + confidence (F4); prompt refiner; v2: citation labels with BibTeX and notes export (N4), per-sentence check and silent papers (N5), partial answers (N6), large-file handling (N7) |
+| **ReddyMasi Manasa** | Cross-encoder reranking (F2); citation verification (F3); evaluation harness (F5); v2: PDF tables (N1), search upgrades (N2), table-cell verification (N3), meaning check (N8), self-repair (N10), Agree? contradiction finder (N12), stress-test evaluation (N13) |
+| **Pramod V** | Documentation: literature survey of 23 papers, research-gap analysis (the Research Gaps section), feature innovation for v2, README and reports |
+| **E Akhila Reddy** | Tech-stack identification, environment setup, architecture design and system design (diagrams) |
+| **Kushal U G** | User interface (light/dark themes, compact v2 layout, PDF side panel N9, Explain panel and glossary N11) and testing (unit tests, backend checks, browser tests) |
 
 ---
 
@@ -389,9 +453,13 @@ ui/styles.py               light and dark themes (all colours and CSS)
 
 ## Known limits
 
-- Citation checking is word-based (fuzzy match, word recall and a number guard). It catches unsupported
-  claims and invented numbers, but it can't judge logical reasoning.
-- Synthesis table cells aren't verified, because each cell combines several claims.
+- Citation checking is word-based by default. The meaning check (N8) judges logical support but is off by
+  default because its smallest model is 283 MB; turn it on with `NLI_ENABLED=1`.
+- Questions that share no key terms with the papers can be refused even when the answer is there; the prompt
+  refiner (or `MULTI_QUERY=1`) usually fixes it.
+- Look-alike passages from another paper can still be cited (stress test: citation precision 0.50), and a
+  passage that is itself wrong is followed (Thesora cannot know the paper is wrong).
+- Paper details (authors, year) are auto-detected and can be wrong; correct them through the API.
 - If the reranker can't load, relevance falls back to embedding similarity, and the 0.35 threshold was
   tuned for reranker scores.
 - Scanned PDFs (no text layer) are rejected; OCR isn't included.
@@ -580,13 +648,26 @@ itself wrong.
 
 </details>
 
-**Licences and credits (v2):** PyMuPDF / PyMuPDF4LLM (AGPL-3.0), streamlit-pdf-viewer, unv-scispacy-abbr from scispaCy
-(Apache-2.0), spaCy (MIT); ideas only from PaperQA2 (Apache-2.0, contradiction severity), ALCE (MIT, citation
-recall/precision) and RAG_Techniques (contextual chunk headers; no code copied).
-
 ---
 
 ## Acknowledgements
 
-- The prompt refiner adapts the rules of [prompt-master](https://github.com/nidhinjs/prompt-master)
-  by Nidhin Joseph Nelson (MIT License), shortened for a small local model and for research questions.
+Repositories and libraries Thesora uses or learned from. Licences are those stated by each project.
+
+| Project | How Thesora uses it | Licence |
+|---|---|---|
+| [prompt-master](https://github.com/nidhinjs/prompt-master) | Rules adapted for the optional prompt refiner | MIT |
+| [PyMuPDF](https://github.com/pymupdf/PyMuPDF) / [PyMuPDF4LLM](https://github.com/pymupdf/pymupdf4llm) | PDF text, sections, tables (N1), highlights and page images (N9) | AGPL-3.0 |
+| [streamlit-pdf-viewer](https://github.com/lfoppiano/streamlit-pdf-viewer) | PDF side panel with highlighted passages (N9) | see repository |
+| [scispaCy](https://github.com/allenai/scispacy) via [unv-scispacy-abbr](https://pypi.org/project/unv-scispacy-abbr/) | Abbreviation glossary (N11) | Apache-2.0 |
+| [spaCy](https://github.com/explosion/spaCy) | Blank English pipeline for the glossary | MIT |
+| [sentence-transformers](https://github.com/UKPLab/sentence-transformers) | Embeddings, cross-encoder reranking, NLI meaning check (N8) | Apache-2.0 |
+| [FAISS](https://github.com/facebookresearch/faiss) | Vector search | MIT |
+| [rank_bm25](https://github.com/dorianbrown/rank_bm25) | Keyword search | Apache-2.0 |
+| [RapidFuzz](https://github.com/rapidfuzz/RapidFuzz) | Citation verification | MIT |
+| [LangChain text splitters](https://github.com/langchain-ai/langchain) | Chunking | MIT |
+| [Ollama](https://github.com/ollama/ollama) + [Qwen3](https://github.com/QwenLM/Qwen3) | Local language model (qwen3:4b-instruct) | MIT / Apache-2.0 |
+| [FastAPI](https://github.com/fastapi/fastapi) and [Streamlit](https://github.com/streamlit/streamlit) | Backend API and web interface | MIT / Apache-2.0 |
+| [PaperQA2](https://github.com/Future-House/paper-qa) | Idea only: grading contradictions by severity (N12) | Apache-2.0 |
+| [ALCE](https://github.com/princeton-nlp/ALCE) | Idea only: citation recall and precision metrics (N13) | MIT |
+| [RAG_Techniques](https://github.com/NirDiamant/RAG_Techniques) | Idea only: contextual chunk headers (N2a); no code copied | see repository |
