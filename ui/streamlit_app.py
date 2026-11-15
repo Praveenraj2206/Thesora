@@ -259,6 +259,9 @@ STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Un
 
 def render_trust_extras(result: dict[str, Any]) -> None:
     """Batch A: repair note, sentence check, verified table cells and silent papers (icon + text, never colour only)."""
+    for part in result.get("parts") or []:
+        icon = "✓ Answered" if part["answered"] else "✗ Not found in your papers"
+        st.markdown(f"**{icon}** · {esc(part['question'])}")
     repair = result.get("repair") or {}
     if repair.get("removed"):
         n = repair["removed"]

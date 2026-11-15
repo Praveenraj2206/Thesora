@@ -173,3 +173,5 @@ METADATA_TITLE_MAX_CHARS = 250
 METADATA_AUTHOR_MAX_CHARS = 300
 LARGE_FILE_WARN_MB = _env_int("LARGE_FILE_WARN_MB", 5)  # N7: UI warns above this size
 MAX_SESSION_PDF_MB = _env_int("MAX_SESSION_PDF_MB", 400)  # N7: total PDF size allowed per chat
+PARTIAL_ANSWERS = _env_str("PARTIAL_ANSWERS", "1") == "1"  # N6: answer multi-part questions part by part
+PART_MIN_WORDS = _env_int("PART_MIN_WORDS", 4)

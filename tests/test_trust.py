@@ -74,3 +74,11 @@ class TrustTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PartialAnswerTests(unittest.TestCase):
+    def test_split_question(self):
+        from app.pipelines.rag import split_question
+        self.assertEqual(len(split_question("What is the 5-4-3-2-1 technique? What GPU trained the models in these papers?")), 2)
+        self.assertEqual(len(split_question("What is deja vu?")), 1)
+        self.assertEqual(len(split_question("What is BM25? Why?")), 1)  # a part shorter than 4 words: no split

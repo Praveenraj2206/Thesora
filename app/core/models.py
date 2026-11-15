@@ -93,6 +93,7 @@ class Answer:
     repair: Optional[dict[str, Any]] = None  # N10
     table_cells: list[dict[str, Any]] = field(default_factory=list)  # N3
     nli_available: Optional[bool] = None  # N8
+    parts: list[dict[str, Any]] = field(default_factory=list)  # N6
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dictionary."""

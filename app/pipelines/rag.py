@@ -7,6 +7,7 @@ injected and shared between sessions.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -80,6 +81,26 @@ from app.generation.trust import (  # noqa: E402  (v2 batch A)
     REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, sentence_report, short_label,
     silent_papers, verify_table,
 )
+
+
+_CITE_NUM = re.compile(r"\[(\d+)\]")
+_PART_SPLIT = re.compile(r"(?<=\?)\s+|;\s*|\s+as well as\s+|\s+and also\s+", re.IGNORECASE)
+
+
+def split_question(question: str) -> list[str]:
+    """Cheap heuristic split (no LLM): '?', ';', 'as well as', 'and also'; every part needs PART_MIN_WORDS words."""
+    parts = [p.strip(" ,") for p in _PART_SPLIT.split(question.strip()) if p and p.strip(" ,")]
+    if len(parts) < 2 or any(len(p.split()) < config.PART_MIN_WORDS for p in parts):
+        return [question.strip()]
+    return [p if p.endswith("?") else p + "?" for p in parts]
+
+
+def _offsets(results) -> list[int]:
+    out, offset = [], 0
+    for r in results:
+        out.append(offset)
+        offset += 0 if r.abstained else len(r.sources)
+    return out
 
 
 class ResearchAssistant:
@@ -191,6 +212,39 @@ class ResearchAssistant:
 
     # ------------------------------------------------------------------ ask
     def ask(self, question: str) -> Answer:
+        """Answer a question; multi-part questions are answered part by part (N6), abstaining only where unsupported."""
+        parts = split_question(question) if config.PARTIAL_ANSWERS else [question.strip()]
+        if len(parts) < 2:
+            return self._ask_one(question)
+        started, mark = time.perf_counter(), len(self.history)
+        results = [self._ask_one(p) for p in parts]
+        del self.history[mark:]
+        texts, sources, sentences, offset = [], [], [], 0
+        for i, (part, res) in enumerate(zip(parts, results), start=1):
+            if res.abstained:
+                texts.append(f"**Part {i}:** {part} — Not found in your papers.")
+                continue
+            texts.append(f"**Part {i}:** " + _CITE_NUM.sub(lambda m: f"[{int(m.group(1)) + offset}]", res.answer))
+            for src in res.sources:
+                src.index += offset
+                sources.append(src)
+            for item in res.sentences:
+                sentences.append({**item, "citations": [n + offset for n in item["citations"]]})
+            offset += len(res.sources)
+        answered = [r for r in results if not r.abstained]
+        result = Answer(
+            question=question.strip(), answer="\n\n".join(texts), abstained=not answered,
+            confidence=round(mean(r.confidence for r in answered), 3) if answered else 0.0, sources=sources,
+            unverified_citations=[n for r, o in zip(results, _offsets(results)) for n in (o + u for u in r.unverified_citations)],
+            message=None if answered else config.ABSTAIN_MESSAGE, latency_s=round(time.perf_counter() - started, 3),
+            mode="ask", sentences=sentences,
+            silent_papers=sorted(set.intersection(*(set(r.silent_papers) for r in answered))) if answered else [],
+            parts=[{"question": p, "answered": not r.abstained, "abstained": r.abstained} for p, r in zip(parts, results)],
+        )
+        self.history.append(result.to_dict())
+        return result
+
+    def _ask_one(self, question: str) -> Answer:
         """Answer a question with hybrid retrieval, reranking, verification and abstention."""
         question = question.strip()
         if not question:
