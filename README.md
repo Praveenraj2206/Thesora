@@ -38,9 +38,11 @@ citation verification → FastAPI → Streamlit.
 
 | Contributor | Contribution |
 |---|---|
-| **Praveen Raj S** | Citation verification (F3); the 10-PDF upload limit; isolated new-chat sessions |
-| **ReddyMasi Manasa** | Major features: hybrid retrieval (F1), cross-encoder reranking (F2), abstention + confidence (F4), evaluation harness (F5), cross-paper synthesis |
-| **Pramod V** | Literature survey; Streamlit user interface |
+| **Praveen Raj S** | Citation verification (F3); the 10-PDF upload limit; isolated new-chat sessions; the optional prompt refiner (adapted from prompt-master) |
+| **ReddyMasi Manasa** | Major features: hybrid retrieval (F1), cross-encoder reranking (F2), abstention + confidence (F4), evaluation harness (F5), cross-paper comparison table |
+| **Pramod V** | Literature survey; research-gap analysis (the "Research Gaps" section of cross-paper synthesis); the user interface with light and dark themes |
+| **E Akhila Reddy** | RIO internship team member |
+| **Kushal U G** | RIO internship team member |
 
 ---
 
@@ -216,8 +218,9 @@ Upload the three papers in `data/papers/` (DejaVu1, DejaVu2, DejaVu3), then ask:
 |---|---|---|
 | F1 exact keyword | `What is the 5-4-3-2-1 technique?` | A grounding exercise using the five senses (DejaVu1) |
 | F1 exact keyword | `What is Dimension-W?` | The "ambient possibility field" (DejaVu3) |
-| F1 reworded | `Which parts of the brain are linked to the feeling of having lived a moment before?` | The hippocampus and parietal lobes (DejaVu1) |
-| F1 reworded | `How many AI systems and chemistry test sets were examined in the audit?` | 22 language models, 12 benchmarks (DejaVu2) |
+| F1 meaning search | `Which brain regions are associated with deja vu according to the papers?` | The hippocampus and parietal lobes (DejaVu1) |
+| F1 exact names | `How many frontier language models and molecular regression benchmarks did Busch et al. audit?` | 22 language models across 12 benchmarks (DejaVu2) |
+| F4 + refiner | `Which parts of the brain are linked to the feeling of having lived a moment before?` | **Abstains** (best relevance 0.12): no key terms shared with the paper. Refine it, and the refined question is answered |
 | F2 rerank | `What causes the Mandela Effect in the strange attractor model?` | Top source [1] is DejaVu3: orphaned topological cache pointers |
 | F3 citations | `How much more often were higher reasoning levels flagged for retrieval than the lowest level?` | "89% more often", source ✅ verified |
 | F3 citations | `What are the three types of intuition identified by Feinberg?` | Guesswork, discovering intuition, fundamental intuition, ✅ verified |
@@ -397,31 +400,144 @@ ui/styles.py               light and dark themes (all colours and CSS)
 
 ---
 
-## Thesora v2 additions
+## Thesora v2: 13 new features
 
-| # | Feature | Status | How to use / setting |
-|---|---|---|---|
-| N1 | Tables become citable chunks (`chunk_type="table"`); two-column check | ✅ (column order already correct, unchanged) | `PDF_LAYOUT_MODE=auto\|plain`; `python scripts/check_extraction.py` |
-| N2a | Contextual headers ("Title › Section") for search | ⚠️ off: made hybrid search worse | `CONTEXT_HEADERS=1` |
-| N2b | Multi-query (2 reworded variants, merged) | ⚠️ off by default (extra LLM call) | `MULTI_QUERY=1` |
-| N2c | Context expansion (passage + neighbours) | ⚠️ off by default (not measured with the LLM) | `CONTEXT_EXPANSION=1`, `CHUNK_PARENT_CHARS` |
-| N3 | Comparison-table cells verified | ✅ | "Table check" under Compare answers |
-| N4 | Citations ("Smith et al., 2023 · p.4"), BibTeX, notes export | ✅ (edit form: API only) | Sidebar download buttons; `PATCH .../metadata` |
-| N5 | Per-sentence status + silent papers | ✅ | "Sentence check" under answers |
-| N6 | Partial answers for multi-part questions | ✅ | `PARTIAL_ANSWERS=1` |
-| N7 | 100 MB files, large-file warning, 400 MB per chat | ✅ | `MAX_UPLOAD_MB`, `LARGE_FILE_WARN_MB`, `MAX_SESSION_PDF_MB` |
-| N8 | Meaning check (NLI) | ⚠️ built, off: smallest model is 283 MB (> 200 MB budget) | `NLI_ENABLED=1` (downloads `cross-encoder/nli-deberta-v3-xsmall`) |
-| N9 | PDF side panel with the passage highlighted | ✅ (viewer clips slightly in narrow panels) | 📄 buttons under answers; `PDF_PANEL_MODE=image` |
-| N10 | Self-repair: one stricter retry, unsupported sentences removed | ✅ | `SELF_REPAIR=1` |
-| N11 | Explain (What/Why/How/Example, "not evidence") + glossary | ✅ (text box, not mouse selection) | 💡 Explain; sidebar Glossary |
-| N12 | "Agree?" mode: quoted positions, conflicts by severity | ✅ (numbers only while NLI is off) | Mode "Agree?" |
-| N13 | Stress test (noisy, look-alike, altered numbers) | ✅ | `python scripts/stress_eval.py [--limit N] [--no-llm]` |
+Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off by default.
+
+<details>
+<summary><b>N1 · Tables in PDFs become citable passages</b> — ✅</summary>
+
+<br>
+
+Each table becomes its own passage (`chunk_type="table"`, markdown rows) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
+
+</details>
+
+<details>
+<summary><b>N2 · Search upgrades (three toggles)</b> — ⚠️ all off by default</summary>
+
+<br>
+
+(a) Contextual headers: "Title › Section" added to the search text only — **off**: measured worse for hybrid search (0.80 → 0.70). `CONTEXT_HEADERS=1`. (b) Multi-query: one short model call writes 2 reworded questions, results merged — off (extra call). `MULTI_QUERY=1`. (c) Context expansion: the model sees the passage plus its neighbours, and verification uses the same text — off (not measured with the model). `CONTEXT_EXPANSION=1`.
+
+</details>
+
+<details>
+<summary><b>N3 · Comparison-table cells are verified</b> — ✅</summary>
+
+<br>
+
+Each Compare cell is split into claims and checked against that paper's own passages: ✓ Supported, ~ Partly supported, ✗ Not found in text, – Not stated, with the evidence page. See **Table check** under a comparison.
+
+</details>
+
+<details>
+<summary><b>N4 · Real citations, BibTeX and notes export</b> — ✅ (edit form: API only)</summary>
+
+<br>
+
+Title, authors, year and DOI are detected at upload (marked auto-detected). Sources show "Smith et al., 2023 · p.4 · Results". Sidebar: **Download .bib** and **Download notes (.md)** (verified citations only, no model call). Correct details with `PATCH /sessions/{id}/documents/{doc_id}/metadata`.
+
+</details>
+
+<details>
+<summary><b>N5 · Per-sentence check and silent papers</b> — ✅</summary>
+
+<br>
+
+Every answer sentence is ✓ Verified, ~ Weak, ! Unverified or ○ Uncited (icon + text). Footer: "No evidence from: Paper X — silence is not disagreement". See **Sentence check** under an answer.
+
+</details>
+
+<details>
+<summary><b>N6 · Partial answers</b> — ✅</summary>
+
+<br>
+
+Questions with several parts (`?`, `;`, "as well as", "and also"; each part 4+ words; no model call to split) are answered part by part; only unsupported parts say "Not found in your papers". `PARTIAL_ANSWERS=1`.
+
+</details>
+
+<details>
+<summary><b>N7 · Large files</b> — ✅</summary>
+
+<br>
+
+Up to 100 MB per PDF (`MAX_UPLOAD_MB`), a warning above 5 MB (`LARGE_FILE_WARN_MB`), and at most 400 MB of PDFs per chat (`MAX_SESSION_PDF_MB`) with a friendly error. Still 10 PDFs per upload.
+
+</details>
+
+<details>
+<summary><b>N8 · Meaning check (NLI)</b> — ⚠️ built, off</summary>
+
+<br>
+
+A local NLI model checks whether the cited passage really supports each claim (entailed / weak / contradicted; contradiction always fails). Off because the smallest suitable model is 283 MB, over the 200 MB budget. Turn on with `NLI_ENABLED=1` (downloads `cross-encoder/nli-deberta-v3-xsmall` once). Without it, checking is by wording only and the UI says so.
+
+</details>
+
+<details>
+<summary><b>N9 · PDF side panel with highlight</b> — ✅</summary>
+
+<br>
+
+Click **📄 [n] p.X** under an answer: the page splits 70/30 and the cited page opens on the right with the passage outlined. PDFs are served from memory only. If the viewer clips the page in a narrow panel, use `PDF_PANEL_MODE=image` (a highlighted page image that always fits; also the automatic fallback).
+
+</details>
+
+<details>
+<summary><b>N10 · Self-repair</b> — ✅</summary>
+
+<br>
+
+If a sentence fails the check, the model gets one stricter retry; anything still unsupported is removed and the answer says "N claims removed". Never more than one retry. `SELF_REPAIR=1`.
+
+</details>
+
+<details>
+<summary><b>N11 · Explain and glossary</b> — ✅ (text box, not mouse selection)</summary>
+
+<br>
+
+**💡 Explain** opens a What / Why / How / Example explanation from that answer's passages only, always labelled "Plain-English explanation — not evidence"; follow-up questions supported. The sidebar **Glossary** lists abbreviations found in the papers (scispaCy's Schwartz–Hearst detector, no model download); their long forms are added to keyword search.
+
+</details>
+
+<details>
+<summary><b>N12 · "Agree?" mode</b> — ✅ (numbers only while N8 is off)</summary>
+
+<br>
+
+A third mode: for a topic, each paper's position is a sentence quoted word for word (no model call), with page and section. Conflicts: ⚠️ Numbers differ (severity 2), ⚠️ Contradiction (severity 3, needs N8), ~ Wording differs (severity 1, hidden unless shown).
+
+</details>
+
+<details>
+<summary><b>N13 · Stress test</b> — ✅</summary>
+
+<br>
+
+`python scripts/stress_eval.py [--limit N] [--no-llm]` mixes in unrelated passages, look-alike passages and passages with altered numbers, and reports citation recall, citation precision, distractor-cited rate and altered-numbers-repeated rate (results below).
+
+</details>
+
+<details>
+<summary><b>New API endpoints and response fields</b></summary>
+
+<br>
 
 New endpoints (all additive): `GET /sessions/{id}/metadata`, `PATCH /sessions/{id}/documents/{doc_id}/metadata`,
 `GET /sessions/{id}/bibtex`, `GET /sessions/{id}/export`, `GET /sessions/{id}/documents/{doc_id}/pdf`,
 `GET /sessions/{id}/documents/{doc_id}/page/{n}.png`, `POST /sessions/{id}/highlight`, `POST /sessions/{id}/explain`,
 `GET /sessions/{id}/glossary`, `POST /sessions/{id}/agree`. `/ask` adds `sentences`, `silent_papers`, `repair`, `parts`,
 `answer_id`, `nli_available`; `/synthesize` adds `table_cells`; sources add `label` and `meaning`.
+
+</details>
+
+<details>
+<summary><b>Measured results (retrieval comparison and stress test)</b></summary>
+
+<br>
 
 **N2 retrieval comparison** (20 questions, `compare_retrievers.py`, hit rate / MRR):
 
@@ -441,6 +557,8 @@ New endpoints (all additive): `GET /sessions/{id}/metadata`, `PATCH /sessions/{i
 
 Repeating altered numbers means the model follows the passage it is given; Thesora cannot detect a passage that is
 itself wrong.
+
+</details>
 
 **Licences and credits (v2):** PyMuPDF / PyMuPDF4LLM (AGPL-3.0), streamlit-pdf-viewer, unv-scispacy-abbr from scispaCy
 (Apache-2.0), spaCy (MIT); ideas only from PaperQA2 (Apache-2.0, contradiction severity), ALCE (MIT, citation

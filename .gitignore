@@ -46,3 +46,4 @@ data/eval/verify_results.json
 
 # v2 patch output
 dist/
+data/eval/stress_results.json
