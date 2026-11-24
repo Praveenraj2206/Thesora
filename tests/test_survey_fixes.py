@@ -176,6 +176,102 @@ class ContextAndGlossaryTests(unittest.TestCase):
         self.assertIn("large language model", expand_query("How do LLMs cite?", glossary))
 
 
+class ScopeAndRankingTests(unittest.TestCase):
+    def _assistant(self):
+        from types import SimpleNamespace
+
+        from app.generation.trust import paper_names
+        from app.pipelines.rag import ResearchAssistant
+
+        a = ResearchAssistant.__new__(ResearchAssistant)
+        page = SimpleNamespace(text="OpenScholar " * 6 + "ScholarQABench " * 5 + "LLMs " * 9)
+        a.paper_names = {
+            "PaperQA.pdf": paper_names({"title": "PaperQA: Retrieval-Augmented Agent", "authors": ["Jakub Lála"]}, []),
+            "Asai.pdf": paper_names({"title": "Synthesizing scientific literature", "authors": ["Akari Asai"]}, [page]),
+            "DeepEra.pdf": paper_names({"title": "DeepEra: A Deep Evidence Reranking Agent"}, []),
+        }
+        return a
+
+    def test_paper_names_from_title_author_and_repeated_system_names(self):
+        names = self._assistant().paper_names
+        self.assertIn("PaperQA", names["PaperQA.pdf"])
+        self.assertIn("Lála", names["PaperQA.pdf"])
+        self.assertIn("OpenScholar", names["Asai.pdf"])
+        self.assertNotIn("LLMs", names["Asai.pdf"])
+
+    def test_question_naming_a_paper_is_scoped_and_unnamed(self):
+        scope, unnamed = self._assistant()._scope("Which embedding model does PaperQA use?")
+        self.assertEqual(scope, {"PaperQA.pdf"})
+        self.assertEqual(unnamed, "Which embedding model does the paper use?")
+
+    def test_similar_name_is_not_a_match_and_no_name_means_no_scope(self):
+        a = self._assistant()
+        self.assertEqual(a._scope("How does PaperQA2 compare?")[0], None)
+        self.assertEqual(a._scope("What is a reranker?"), (None, "What is a reranker?"))
+
+    def test_spell_out_for_reranker(self):
+        from app.generation.viewer import spell_out
+
+        glossary = [{"abbr": "LFS", "long_form": "Logic Fidelity Score", "page": 5, "doc_id": "D.pdf"}]
+        self.assertEqual(spell_out("How is LFS computed?", glossary), "How is LFS (Logic Fidelity Score) computed?")
+        self.assertIsNone(spell_out("How is it computed?", glossary))
+
+    def test_number_questions_keep_a_relevant_table(self):
+        from app.core.models import DocumentChunk, RetrievedChunk
+        from app.retrieval.retriever import _with_table_slot
+
+        def item(kind, rel, i):
+            chunk = DocumentChunk(chunk_id=str(i), doc_id="P.pdf", page_number=1, section="", text=f"t{i}",
+                                  chunk_index=i, chunk_type=kind)
+            return RetrievedChunk(chunk=chunk, store_index=i, dense_score=0.0, bm25_score=None, rrf_score=0.0,
+                                  relevance=rel)
+
+        ranked = [item("text", 0.99, i) for i in range(5)] + [item("table", 0.9, 5)]
+        top = _with_table_slot("What accuracy did it get?", ranked, 5)
+        self.assertEqual(top[-1].chunk.chunk_type, "table")
+        self.assertEqual(len(top), 5)
+        self.assertTrue(all(c.chunk.chunk_type == "text" for c in _with_table_slot("Who wrote it?", ranked, 5)))
+
+    def test_accent_drawn_as_its_own_glyph_joins_the_letter(self):
+        from app.ingestion.pdf_loader import line_text
+
+        def ch(c, x0):
+            return {"c": c, "bbox": (x0, 0, x0 + 5, 10)}
+
+        line = {"spans": [{"size": 10, "chars": [ch("L", 0), ch("´", 7), ch("a", 6), ch("l", 11), ch("a", 16)]}]}
+        self.assertEqual(line_text(line), "Lála")
+
+    def test_agree_candidate_sentences_skip_captions_and_code(self):
+        from app.generation.agree import candidate_sentences
+
+        text = ("Table 4: Comparison of Hallucination in Citations. GPT-4o hallucinates citations in most of the "
+                "cases we checked. # Process chunks in embedding batches for i in range")
+        self.assertEqual(candidate_sentences(text), ["GPT-4o hallucinates citations in most of the cases we checked."])
+
+
+class TableCaptionTests(unittest.TestCase):
+    def test_table_passage_starts_with_its_caption(self):
+        from app.ingestion.layout import table_chunks
+
+        doc = fitz.open()
+        page = doc.new_page()
+        _put(page, 50, 60, "Table 2: Evaluation on LitQA. We compare several systems.")
+        rows = [("Model", "Accuracy"), ("PaperQA", "69.5%"), ("Human", "66.8%")]
+        for r, (a, b) in enumerate(rows):
+            y = 90 + r * 20
+            page.draw_rect(fitz.Rect(50, y - 14, 150, y + 6))
+            page.draw_rect(fitz.Rect(150, y - 14, 250, y + 6))
+            _put(page, 55, y, a)
+            _put(page, 155, y, b)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.pdf"
+            doc.save(str(path))
+            chunks = table_chunks(path, "t.pdf", 0, {})
+        self.assertTrue(chunks, "table not detected")
+        self.assertTrue(chunks[0].text.startswith("Table 2: Evaluation on LitQA"))
+        self.assertIn("69.5%", chunks[0].text)
+
+
 class CompareCoverageTests(unittest.TestCase):
     """Uses the real embedder and reranker on the bundled sample papers (skipped if they cannot load)."""
 

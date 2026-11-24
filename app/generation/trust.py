@@ -200,6 +200,7 @@ _HEADER_JUNK_RE = re.compile(
     r"|under review|journal\b|page \d|\d+$)",
     re.IGNORECASE,
 )
+_PUBLICATION_LINE_RE = re.compile(r"©|\(c\)\s*(19|20)\d\d|copyright|proceedings of|published", re.IGNORECASE)
 _ABSTRACT_RE = re.compile(r"^(abstract|a\s?b\s?s\s?t\s?r\s?a\s?c\s?t|1\.?\s+introduction|introduction)\b", re.IGNORECASE)
 _NAME_RE = re.compile(r"^[A-Z][\w'’.\-]*(?:\s+[A-Z][\w'’.\-]*){1,3}$")
 _NOT_NAME_WORDS = frozenset(
@@ -225,14 +226,15 @@ def _page_lines(page: Any) -> list[dict[str, Any]]:
             spans = [sp for sp in raw.get("spans", []) if any(not c["c"].isspace() for c in sp.get("chars", []))]
             if not spans:
                 continue
-            pieces, prev_x1 = [], None
-            for sp in spans:
-                x0 = sp["chars"][0]["bbox"][0] if sp.get("chars") else sp["bbox"][0]
+            segments: list[list[dict]] = [[]]
+            prev_x1 = None
+            for sp in spans:  # split the line only where a wide gap separates two names
+                x0 = sp["chars"][0]["bbox"][0]
                 if prev_x1 is not None and x0 - prev_x1 > config.METADATA_NAME_GAP_EM * float(sp.get("size", 10)):
-                    pieces.append(_BIG_GAP)
-                pieces.append(line_text({"spans": [sp]}))
-                prev_x1 = sp["chars"][-1]["bbox"][2] if sp.get("chars") else sp["bbox"][2]
-            text = re.sub(r"\s*\u2003\s*", _BIG_GAP, re.sub(r"[ \t]+", " ", " ".join(pieces).strip()))
+                    segments.append([])
+                segments[-1].append(sp)
+                prev_x1 = sp["chars"][-1]["bbox"][2]
+            text = _BIG_GAP.join(line_text({"spans": seg}) for seg in segments if seg)
             if text.strip(_BIG_GAP):
                 lines.append({"text": text, "size": max(float(sp.get("size", 0)) for sp in spans),
                               "y": float(raw["bbox"][1]), "x": float(raw["bbox"][0])})
@@ -328,13 +330,43 @@ def extract_metadata(pdf_path: str | Path, doc_id: str) -> dict[str, Any]:
                 meta["authors"] = [a.strip() for a in re.split(r",|;| and ", info["author"]) if a.strip()][:8]
             all_text = " ".join(pdf[i].get_text() for i in range(min(2, pdf.page_count)))
             header_text = " ".join(_plain(ln["text"]) for ln in head) + " " + " ".join(
-                _plain(ln["text"]) for ln in lines if _HEADER_JUNK_RE.match(_plain(ln["text"])))
+                _plain(ln["text"]) for ln in lines
+                if _HEADER_JUNK_RE.match(_plain(ln["text"])) or _PUBLICATION_LINE_RE.search(ln["text"]))
             meta["year"] = _detect_year(all_text, header_text)
             doi = _DOI_RE.search(all_text)
             meta["doi"] = doi.group(0).rstrip(".,;)") if doi else None
     except Exception as exc:  # metadata is best effort; the file name stays the title
         logger.info("Metadata extraction failed for %s: %s", doc_id, exc)
     return meta
+
+
+_SYSTEM_NAME_RE = re.compile(r"\b[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b")
+
+
+def paper_names(meta: Optional[Mapping[str, Any]], pages: Sequence[Any]) -> dict[str, int]:
+    """Names a question may use for this paper, with a strength used to settle shared names:
+    the title part before ':' ("PaperQA", "Ai2 Scholar QA"), the first author's surname, and system
+    names written in mixed case that the paper repeats on its first pages ("OpenScholar", "LitQA")."""
+    names: dict[str, int] = {}
+    meta = meta or {}
+    title = meta.get("title") or ""
+    if ":" in title:
+        head = title.split(":")[0].strip()
+        if 1 <= len(head.split()) <= 4:
+            names[head] = 1000
+    authors = meta.get("authors") or []
+    if authors and len(authors[0].split()[-1]) >= 3:
+        names[authors[0].split()[-1]] = 500
+    text = " ".join(getattr(p, "text", "") for p in list(pages)[: config.PAPER_NAME_PAGES])
+    counts: dict[str, int] = {}
+    for token in _SYSTEM_NAME_RE.findall(text):
+        if re.fullmatch(r"[A-Z0-9]+s", token):  # plural acronyms such as "LLMs" are not names
+            continue
+        counts[token] = counts.get(token, 0) + 1
+    for token, n in counts.items():
+        if n >= config.PAPER_NAME_MIN_COUNT:
+            names[token] = max(names.get(token, 0), n)
+    return names
 
 
 def short_label(meta: Optional[Mapping[str, Any]], page: int, section: str) -> str:

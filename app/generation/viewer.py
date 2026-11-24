@@ -156,6 +156,17 @@ def expand_query(query: str, glossary: Sequence[Mapping[str, Any]]) -> Optional[
     return f"{query} {' '.join(dict.fromkeys(extra))}" if extra else None
 
 
+def spell_out(query: str, glossary: Sequence[Mapping[str, Any]]) -> Optional[str]:
+    """The question with known abbreviations written out ("LFS" -> "LFS (Logic Fidelity Score)") for the
+    reranker, which does not know paper-specific abbreviations. None when nothing to spell out."""
+    out = query
+    for g in glossary_hits(query, glossary):
+        if g["long_form"].lower() in query.lower():
+            continue
+        out = re.sub(rf"\b{re.escape(g['abbr'])}s?\b", lambda m, g=g: f"{m.group(0)} ({g['long_form']})", out, count=1)
+    return out if out != query else None
+
+
 def build_explain_prompt(selected: str, passages: Sequence[str], follow_up: Optional[str], previous: Optional[str]) -> str:
     numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(passages, start=1))
     prompt = f"Passages:\n\n{numbered}\n\nSelected text: {selected[: config.EXPLAIN_MAX_SELECTION_CHARS]}"

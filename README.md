@@ -94,6 +94,8 @@ A calm "paper" light theme with a one-click dark theme, citation badges, source 
 
 </details>
 
+**Questions that name a paper** ("Which embedding model does PaperQA use?") are searched inside that paper only, with a wider pool, and every passage keeps its best reranker score with and without the paper's name: inside one paper the name no longer tells passages apart, it only favours passages that repeat it. Paper names come from the title (the part before ":"), the first author and system names the paper repeats ("OpenScholar", "LitQA"). Paper-specific abbreviations are spelled out for the reranker too ("LFS (Logic Fidelity Score)"). For questions asking for numbers, the best clearly relevant table keeps the last of the 5 slots. Measured on the six survey papers with `scripts/survey_check.py`: 13 of 14 test questions get the answer passage (the miss is a paraphrase sharing no words with the paper, where Thesora abstains), both out-of-scope questions abstain, Compare covers 6 of 6 papers.
+
 **Pipeline:** PDF → PyMuPDF text + section detection → chunks (512 characters, 100 overlap) → all-MiniLM-L6-v2 embeddings → FAISS + BM25 → RRF fusion → cross-encoder rerank → Ollama → citation verification → FastAPI → Streamlit.
 
 ---
@@ -497,7 +499,7 @@ Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off
 
 <br>
 
-Each table becomes its own passage (`chunk_type="table"`, markdown rows) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Tightly justified two-column lines no longer come out glued ("Priortoprocessingaquery"): word spaces are rebuilt from the gaps between letters (`PDF_SPACE_GAP_EM=0.08`), and the PDF highlight matches letter by letter when the PDF itself has no space characters. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
+Each table becomes its own passage (`chunk_type="table"`, markdown rows, headed by its "Table N: …" caption) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Tightly justified two-column lines no longer come out glued ("Priortoprocessingaquery"): word spaces are rebuilt from the gaps between letters (`PDF_SPACE_GAP_EM=0.08`), and the PDF highlight matches letter by letter when the PDF itself has no space characters. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
 
 </details>
 
@@ -596,7 +598,7 @@ If a sentence fails the check, the model gets one stricter retry; anything still
 
 <br>
 
-A third mode: for a topic, each paper's position is a sentence quoted word for word (no model call), with page and section. Conflicts: ⚠️ Numbers differ (severity 2), ⚠️ Contradiction (severity 3, needs N8), ~ Wording differs (severity 1: not a disagreement, listed only when **Also list pairs that are only worded differently** is switched on). Enter one topic at a time. If only one paper discusses the topic, Thesora says so instead of reporting "no conflicts".
+A third mode: for a topic, each paper's position is a sentence quoted word for word (no model call), with page and section. Conflicts: ⚠️ Numbers differ (severity 2), ⚠️ Contradiction (severity 3, needs N8), ~ Wording differs (severity 1: not a disagreement, listed only when **Also list pairs that are only worded differently** is switched on). Each paper's position is the sentence the cross-encoder scores highest for the topic (captions and code lines skipped), and a paper is quoted only if that sentence scores at least 0.3 (`AGREE_MIN_RELEVANCE`). Enter one topic at a time. If only one paper discusses the topic, Thesora says so instead of reporting "no conflicts".
 
 </details>
 

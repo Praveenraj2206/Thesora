@@ -160,9 +160,10 @@ It can't be forced on demand. The unit tests prove the logic: `python -m pytest 
 
 | # | Topic (Agree? mode) | Pass looks like |
 |---|---|---|
-| Q17 | `citation hallucination` | Quotes from OpenScholar (GPT-4o 78–90%) and PaperQA (its hallucination table, PaperQA 0%). **⚠️ Numbers differ** flagged. Each quote is word for word with a page number. |
-| Q18 | `cost per question` | Ai2 **$0.50** per response vs PaperQA **$0.18** per question → Numbers differ. |
-| Q19 | `chunk size` | PaperQA 4,000 characters vs Agentic Hybrid RAG 2,024 characters (50 overlap) vs Ai2 480 tokens. |
+| Q17 | `citation hallucination` | Quotes from PaperQA (how hallucinated citations were categorised), OpenScholar (GPT-5 still fabricates citations) and Ai2. Each quote is word for word with a page. |
+| Q18 | `citation accuracy` | 4 papers: HySemRAG (field-level accuracy, 74.4% DOI matching …), OpenScholar, PaperQA, Ai2. |
+| Q19 | `reranker model` | OpenScholar, Ai2 (its reranker table) and DeepEra. A "⚠️ Numbers differ" here compares model sizes, so read both quotes. |
+| Q20 | `cost per question` | **Only one paper** (PaperQA, $0.18): Thesora should say "Only one paper discusses this topic", not "no conflicts". |
 
 No quote should come from a References section. Note: these compare different setups, so "numbers differ" means "look closer", not "one paper is wrong". Say that in the demo.
 
@@ -173,6 +174,13 @@ python scripts/stress_eval.py --limit 3
 **Pass:** it prints citation recall, citation precision, distractor-cited rate and altered-numbers-repeated rate. It uses the built-in cases. DeepEra's SSLI distractors ("semantically similar but logically irrelevant") are the same idea, which is a good link for the report.
 
 ---
+
+## Quick check without the model (terminal)
+
+```bash
+python scripts/survey_check.py "C:/thesora_survey"
+```
+Expect 13/14 retrieval checks to pass (the "harmful questions" paraphrase is the known miss: Thesora abstains), Compare 6/6 papers, and paper names such as "Lála et al., 2023" and "Godinez, 2025".
 
 ## Step 3: Record the results
 

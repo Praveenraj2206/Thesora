@@ -14,14 +14,37 @@ from app import config
 _SENT = re.compile(r"(?<=[.!?])\s+")
 _WORD = re.compile(r"[a-z][a-z-]{2,}")
 _NUM = re.compile(r"\d+(?:\.\d+)?")
-_STOP = {"the", "and", "for", "with", "that", "this", "from", "were", "was", "are", "than", "more", "less", "which"}
+_STOP = {"the", "and", "for", "with", "that", "this", "from", "were", "was", "are", "than", "more", "less", "which",
+         "per", "each", "using", "used", "based", "about", "into", "over", "our", "their", "its", "has", "have", "had",
+         "also", "all", "can", "may", "such", "these", "those", "between", "both", "most", "only", "other"}
+_CAPTION = re.compile(r"^(table|figure|fig\.)\s*\d+", re.IGNORECASE)
+
+
+def _norm(word: str) -> str:
+    """'costs' and 'cost', 'questions' and 'question' are the same topic word."""
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def candidate_sentences(passage: str) -> list[str]:
+    """Sentences that can state a position: 6+ words, not a table or figure caption, not a code line."""
+    sentences = [x.strip() for x in _SENT.split(" ".join(passage.split()))]
+    return [x for x in sentences if len(x.split()) >= 6 and not _CAPTION.match(x) and not x.lstrip().startswith(("#", "|"))]
 
 
 def position(passage: str, topic: str) -> str:
-    """The passage sentence sharing most words with the topic (extractive, no LLM)."""
-    words = set(_WORD.findall(topic.lower())) - _STOP
-    sentences = [s.strip() for s in _SENT.split(" ".join(passage.split())) if len(s.split()) >= 4] or [passage]
-    return max(sentences, key=lambda s: len(words & set(_WORD.findall(s.lower()))))
+    """The passage sentence sharing most words with the topic (extractive, no LLM).
+
+    Table and figure captions are skipped (they name a topic but state no position); among equally
+    good sentences, one that reports a number is preferred."""
+    words = {_norm(w) for w in _WORD.findall(topic.lower())} - _STOP
+    sentences = [s.strip() for s in _SENT.split(" ".join(passage.split())) if len(s.split()) >= 4]
+    sentences = [s for s in sentences if not _CAPTION.match(s)] or sentences or [passage]
+
+    def score(sentence: str) -> tuple[int, bool]:
+        overlap = len(words & {_norm(w) for w in _WORD.findall(sentence.lower())})
+        return overlap, bool(_NUM.search(sentence))
+
+    return max(sentences, key=score)
 
 
 def numbers_with_context(sentence: str) -> dict[str, set[str]]:
@@ -34,7 +57,7 @@ def numbers_with_context(sentence: str) -> dict[str, set[str]]:
             for w in window:
                 for word in _WORD.findall(w):
                     if word not in _STOP:
-                        found.setdefault(word, set()).add(num)
+                        found.setdefault(_norm(word), set()).add(num)
     return found
 
 

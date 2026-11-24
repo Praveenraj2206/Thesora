@@ -60,6 +60,27 @@ def apply_relevance_floor(
     return kept if len(kept) >= min_keep else list(ranked[:min_keep])
 
 
+
+_NUMBER_QUESTION_RE = re.compile(
+    r"\b(accuracy|precision|recall|f1|ndcg|mrr|score|scores|rate|rates|percent|percentage|how many|how much|"
+    r"number of|results?|performance|benchmark|table|cost|latency|size|compare[ds]?)\b|%",
+    re.IGNORECASE,
+)
+
+
+def _with_table_slot(query: str, ranked: list[RetrievedChunk], k: int) -> list[RetrievedChunk]:
+    """For questions asking for numbers, keep the best clearly relevant table in the last slot.
+
+    Prose that names the paper and its benchmark can outscore the results table itself, and the
+    table holds the numbers the question asks for."""
+    top = ranked[:k]
+    if (not config.TABLE_SLOT or len(top) < k or any(c.chunk.chunk_type == "table" for c in top)
+            or not _NUMBER_QUESTION_RE.search(query)):
+        return top
+    table = next((c for c in ranked[k:] if c.chunk.chunk_type == "table"
+                  and c.relevance >= config.TABLE_SLOT_MIN_RELEVANCE), None)
+    return top[:-1] + [table] if table else top
+
 class Reranker:
     """Lazy, thread-safe cross-encoder wrapper shared by every chat session.
 
@@ -210,26 +231,61 @@ class HybridRetriever:
         final_k: int = config.FINAL_TOP_K,
         min_relevance: Optional[float] = None,
         sparse_query: Optional[str] = None,
+        scope: Optional[set[str]] = None,
+        alt_queries: Sequence[str] = (),
     ) -> list[RetrievedChunk]:
         """Hybrid retrieve + rerank. Returns up to ``final_k`` chunks, best first.
 
         Chunks below ``min_relevance`` (default ``RELEVANCE_FLOOR``) are dropped,
         keeping at least ``MIN_CONTEXT_CHUNKS``; pass 0.0 to disable the floor.
+        ``scope``: only search these papers (the question names them), with a wider pool.
+        ``alt_queries``: other phrasings (paper name removed, abbreviations spelled out);
+        each passage keeps its best reranker score over all phrasings.
         """
         if len(self._store) == 0 or not query.strip():
             return []
         query_vector = self._embedder.embed_query(query)
         self._sparse_query = sparse_query  # N11: glossary long forms added to the BM25 query only
         try:
-            candidates = self._candidates(query, query_vector, dense_k, bm25_k, fused_k)
+            if scope:
+                candidates = self._per_document_candidates(query, query_vector, config.SCOPED_POOL, docs=scope)
+                seen = {c.store_index for c in candidates}
+                for alt in dict.fromkeys(q for q in alt_queries if q.strip() and q != query):
+                    # the name-free wording finds passages the paper's name hides ("the threshold is 0.8")
+                    self._sparse_query = None
+                    for extra in self._per_document_candidates(alt, self._embedder.embed_query(alt),
+                                                               config.SCOPED_POOL, docs=scope):
+                        if extra.store_index not in seen:
+                            seen.add(extra.store_index)
+                            candidates.append(extra)
+            else:
+                candidates = self._candidates(query, query_vector, dense_k, bm25_k, fused_k)
         finally:
             self._sparse_query = None
         scored = self._score(query, candidates)
+        self._rescore_with(alt_queries, scored)
         scored.sort(key=lambda c: c.relevance, reverse=True)
+        top = _with_table_slot(query, scored, final_k)
         floor = config.RELEVANCE_FLOOR if min_relevance is None else min_relevance
-        return apply_relevance_floor(scored[:final_k], floor)
+        return apply_relevance_floor(top, floor)
 
-    def _per_document_candidates(self, query: str, query_vector: np.ndarray, pool: int) -> list[RetrievedChunk]:
+    def _rescore_with(self, alt_queries: Sequence[str], scored: list[RetrievedChunk]) -> None:
+        """Keep each passage's best cross-encoder score over several phrasings of the question."""
+        if not scored or not alt_queries or scored[0].relevance_source != "cross-encoder":
+            return
+        for alt in dict.fromkeys(q for q in alt_queries if q.strip()):
+            try:
+                logits = self._reranker.logits(alt, [c.chunk.text for c in scored])
+            except Exception as exc:  # the first scores stay valid
+                logger.warning("Alternative-query rerank failed (%s).", exc)
+                return
+            for candidate, logit in zip(scored, logits):
+                if candidate.rerank_logit is None or logit > candidate.rerank_logit:
+                    candidate.rerank_logit, candidate.relevance = logit, sigmoid(logit)
+
+    def _per_document_candidates(
+        self, query: str, query_vector: np.ndarray, pool: int, docs: Optional[set[str]] = None
+    ) -> list[RetrievedChunk]:
         """Dense + BM25 search run separately inside each paper, fused per paper with RRF.
 
         A single shared pool lets a few long papers crowd the others out; ranking within each
@@ -253,9 +309,12 @@ class HybridRetriever:
                 bucket.append((i, score))
         candidates: list[RetrievedChunk] = []
         for doc_id in dict.fromkeys(list(dense_by_doc) + list(sparse_by_doc)):
+            if docs is not None and doc_id not in docs:
+                continue
             dense, sparse = dense_by_doc.get(doc_id, []), sparse_by_doc.get(doc_id, [])
             dense_scores, sparse_scores = dict(dense), dict(sparse)
-            fused = reciprocal_rank_fusion([[i for i, _ in dense], [i for i, _ in sparse]], top_k=pool)
+            # keep every candidate of both lists: a passage only keyword search finds (a results table) must reach the reranker
+            fused = reciprocal_rank_fusion([[i for i, _ in dense], [i for i, _ in sparse]], top_k=None)
             for index, rrf_score in fused:
                 dense_score = dense_scores.get(index)
                 if dense_score is None:

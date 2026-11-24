@@ -85,7 +85,12 @@ EMBEDDING_BATCH_SIZE = _env_int("EMBEDDING_BATCH_SIZE", 32)
 DENSE_TOP_K = _env_int("DENSE_TOP_K", 20)
 BM25_TOP_K = _env_int("BM25_TOP_K", 20)
 FUSED_TOP_K = _env_int("FUSED_TOP_K", 8)
+SCOPED_POOL = _env_int("SCOPED_POOL", 15)  # dense and BM25 candidates searched inside a paper the question names
+PAPER_NAME_PAGES = 3  # pages scanned for a paper's system names (OpenScholar, LitQA)
+PAPER_NAME_MIN_COUNT = 5  # a mixed-case name must appear this often to count as the paper's own
 FINAL_TOP_K = _env_int("FINAL_TOP_K", 5)
+TABLE_SLOT = _env_str("TABLE_SLOT", "1") == "1"  # number questions keep the best relevant table in the last slot
+TABLE_SLOT_MIN_RELEVANCE = _env_float("TABLE_SLOT_MIN_RELEVANCE", 0.5)
 RRF_K = _env_int("RRF_K", 60)
 RERANKER_MODEL = _env_str("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANKER_MAX_LENGTH = 512
@@ -197,6 +202,8 @@ PDF_PANEL_MODE = _env_str("PDF_PANEL_MODE", "viewer")  # "viewer" (pdf.js) or "i
 # --------------------------------------------------------------------------- v2 N1 / N2 / N12
 PDF_LAYOUT_MODE = _env_str("PDF_LAYOUT_MODE", "auto")  # "auto": add table chunks; "plain": text only (old behaviour)
 TABLE_MIN_ROWS = _env_int("TABLE_MIN_ROWS", 2)
+TABLE_CAPTION_MAX_GAP = 60.0  # points between a table and its "Table N:" caption
+TABLE_CAPTION_MAX_CHARS = 400
 COLUMN_GAP_RATIO = _env_float("COLUMN_GAP_RATIO", 0.15)  # check_extraction.py: share of blocks on each side = two columns
 CONTEXT_HEADERS = _env_str("CONTEXT_HEADERS", "0") == "1"  # N2a (default set from compare_retrievers results)
 MULTI_QUERY = _env_str("MULTI_QUERY", "0") == "1"  # N2b: off by default (one extra LLM call)
@@ -206,3 +213,4 @@ CONTEXT_EXPANSION = _env_str("CONTEXT_EXPANSION", "1") == "1"  # N2c: give the L
 CONTEXT_EXPANSION_TOP = _env_int("CONTEXT_EXPANSION_TOP", 2)  # only the best N passages are expanded (keeps prompts short)
 CHUNK_PARENT_CHARS = _env_int("CHUNK_PARENT_CHARS", 1200)
 AGREE_NUMBER_WINDOW = _env_int("AGREE_NUMBER_WINDOW", 6)  # words around a number that name its metric
+AGREE_MIN_RELEVANCE = _env_float("AGREE_MIN_RELEVANCE", 0.3)  # a paper is quoted only if its passage is clearly on topic

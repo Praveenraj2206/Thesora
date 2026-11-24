@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,6 +116,11 @@ def _span_chars(span: dict) -> list[tuple[str, float, float]]:
     return [(c.get("c", ""), float(c["bbox"][0]), float(c["bbox"][2])) for c in chars]
 
 
+# LaTeX often draws an accent as its own glyph before the letter ("L ´ala"): join it to the letter.
+_SPACING_ACCENTS = {"´": "\u0301", "`": "\u0300", "¨": "\u0308", "ˆ": "\u0302", "˜": "\u0303",
+                    "¸": "\u0327", "ˇ": "\u030c", "˚": "\u030a", "˝": "\u030b", "¯": "\u0304"}
+
+
 def line_text(raw_line: dict) -> str:
     """Text of one PyMuPDF line with word spaces rebuilt from the gaps between letters.
 
@@ -124,10 +130,20 @@ def line_text(raw_line: dict) -> str:
     """
     out: list[str] = []
     prev_x1: Optional[float] = None
+    accent = ""
     for span in raw_line.get("spans", []):
         size = float(span.get("size", 0.0)) or 1.0
         for ch, x0, x1 in _span_chars(span):
             if not ch:
+                continue
+            if ch in _SPACING_ACCENTS:  # keep it for the next letter; no space around it
+                if out and out[-1] == " ":
+                    out.pop()
+                accent = _SPACING_ACCENTS[ch]
+                continue
+            if accent and not ch.isspace():
+                out.append(unicodedata.normalize("NFC", ch + accent))
+                accent, prev_x1 = "", x1
                 continue
             if prev_x1 is not None and out and not out[-1].isspace() and not ch.isspace():
                 if x0 - prev_x1 > config.PDF_SPACE_GAP_EM * size:

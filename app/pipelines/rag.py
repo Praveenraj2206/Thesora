@@ -84,9 +84,10 @@ from app.ingestion.layout import table_chunks  # noqa: E402  (v2 N1)
 
 from app.generation.viewer import (  # noqa: E402  (v2 N9 / N11)
     EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits, merge_glossary,
+    spell_out,
 )
 from app.generation.trust import (  # noqa: E402  (v2 batch A)
-    REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, sentence_report, short_label,
+    REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, paper_names, sentence_report, short_label,
     silent_papers, verify_table,
 )
 
@@ -142,6 +143,7 @@ class ResearchAssistant:
         self.history: list[dict[str, Any]] = []  # N4 notes export (memory only)
         self.pdf_bytes: dict[str, bytes] = {}  # N9: original PDF bytes, memory only, freed with the chat
         self.glossary: list[dict[str, Any]] = []  # N11
+        self.paper_names: dict[str, dict[str, int]] = {}  # name -> strength, per paper (question scoping)
         self.answer_passages: dict[str, list[str]] = {}  # N11: passages behind each answer, by answer_id
         self.embedder = embedder or Embedder()
         self.store = store if store is not None else VectorStore()
@@ -161,6 +163,7 @@ class ResearchAssistant:
         self.metadata[name] = extract_metadata(pdf_path, name)
         self.pdf_bytes[name] = pdf_path.read_bytes()
         self.glossary = merge_glossary(self.glossary, build_glossary(pages, name))
+        self.paper_names[name] = paper_names(self.metadata[name], pages)
         if self._chunker is None:
             self._chunker = DocumentChunker()
         chunks = self._chunker.chunk_pages(pages)
@@ -236,6 +239,44 @@ class ResearchAssistant:
         self.history.append(answer.to_dict())
         return answer
 
+    def retrieve_for(self, question: str) -> list:
+        """Retrieval for one question: glossary long forms for keyword search, search limited to the papers the
+        question names, and reranking with the paper name removed and abbreviations spelled out."""
+        scope, unnamed = self._scope(question)
+        # Inside a named paper its name no longer tells passages apart; it only pulls the reranker towards
+        # passages that repeat the name. Each passage keeps its best score over both wordings (measured on the
+        # survey papers: name only 5/12, both wordings 7/12, never worse than either alone).
+        # Abbreviations are spelled out (and keyword search run) on the name-free wording only: a paper's own
+        # name can be a glossary term ("DeepEra = Deep Evidence Reranking Agent") and would bring the name back.
+        query = question
+        if scope:
+            alternatives = [unnamed, spell_out(unnamed, self.glossary)]
+            sparse = None  # keyword search runs on the question as asked and on each name-free wording
+        else:
+            alternatives = [spell_out(question, self.glossary)]
+            sparse = expand_query(question, self.glossary)
+        alternatives = [q for q in alternatives if q and q != query]
+        extra = {k: v for k, v in (("sparse_query", sparse), ("scope", scope), ("alt_queries", alternatives)) if v}
+        return self.retriever.retrieve(query, **extra)  # plain retrievers (tests, older code) take the query only
+
+    def _scope(self, question: str) -> tuple[Optional[set[str]], str]:
+        """Papers the question names ("Which model does PaperQA use?") and the question with those names
+        replaced by "the paper". No scope when no paper (or every paper) is named."""
+        owners: dict[str, tuple[int, str]] = {}  # name -> (strength, paper); a shared name goes to its strongest paper
+        for doc_id, names in self.paper_names.items():
+            for name, strength in names.items():
+                if name.lower() not in owners or strength > owners[name.lower()][0]:
+                    owners[name.lower()] = (strength, doc_id)
+        scope, unnamed = set(), question
+        for name in sorted(owners, key=len, reverse=True):
+            pattern = re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE)
+            if pattern.search(unnamed):
+                scope.add(owners[name][1])
+                unnamed = pattern.sub("the paper", unnamed)
+        if not scope or len(scope) >= len(self.paper_names):
+            return None, question
+        return scope, " ".join(unnamed.split())
+
     def _subject(self, doc_id: str) -> str:
         """Words naming a paper (file name, title, first author) - ignored when checking a claim's wording."""
         meta = self.metadata.get(doc_id) or {}
@@ -284,19 +325,42 @@ class ResearchAssistant:
             raise ValueError("Topic must not be empty.")
         if len(self.store) == 0:
             return {"topic": topic, "rows": [], "conflicts": [], "nli_available": False, "message": config.NO_DOCUMENTS_MESSAGE}
-        best: dict[str, Any] = {}
+        by_doc: dict[str, list[Any]] = {}
         for c in self.retriever.retrieve_across_documents(topic):
             if re.search(r"reference|bibliograph|works cited", c.chunk.section or "", re.IGNORECASE):
                 continue  # a reference list quotes other papers, not this paper's position
-            if c.chunk.doc_id not in best or c.relevance > best[c.chunk.doc_id].relevance:
-                best[c.chunk.doc_id] = c
-        rows = [{"doc_id": d, "label": short_label(self.metadata.get(d), c.chunk.page_number, c.chunk.section),
-                 "page": c.chunk.page_number, "section": c.chunk.section, "relevance": round(c.relevance, 3),
-                 "position": position(c.chunk.text, topic), "passage": c.chunk.text}
-                for d, c in best.items() if c.relevance >= config.RELEVANCE_FLOOR]
+            by_doc.setdefault(c.chunk.doc_id, []).append(c)
+        rows = []
+        for doc_id, chunks in by_doc.items():
+            picked = self._best_sentence(topic, chunks)
+            if picked is None:
+                continue
+            sentence, chunk, relevance = picked
+            if relevance >= config.AGREE_MIN_RELEVANCE:
+                rows.append({"doc_id": doc_id, "label": short_label(self.metadata.get(doc_id), chunk.chunk.page_number,
+                                                                    chunk.chunk.section),
+                             "page": chunk.chunk.page_number, "section": chunk.chunk.section,
+                             "relevance": round(relevance, 3), "position": sentence, "passage": chunk.chunk.text})
+        rows.sort(key=lambda r: -r["relevance"])
         nli = self._nli()
         return {"topic": topic, "rows": rows, "conflicts": compare(rows, nli), "nli_available": nli is not None,
                 "message": None if nli else "Meaning check is off: only number conflicts are detected."}
+
+    def _best_sentence(self, topic: str, chunks: list[Any]) -> Optional[tuple[str, Any, float]]:
+        """The paper's sentence that best states its position on ``topic``: every sentence of its top passages
+        is scored by the cross-encoder (copied word for word, no LLM). Falls back to word overlap."""
+        from app.generation.agree import candidate_sentences, position
+
+        pairs = [(sentence, c) for c in chunks for sentence in candidate_sentences(c.chunk.text)]
+        if not pairs:
+            return None
+        try:
+            logits = self.retriever._reranker.logits(topic, [sentence for sentence, _ in pairs])
+        except Exception:  # reranker unavailable: word overlap on the best passage, its passage relevance
+            best = max(chunks, key=lambda c: c.relevance)
+            return position(best.chunk.text, topic), best, best.relevance
+        i = max(range(len(pairs)), key=lambda k: logits[k])
+        return pairs[i][0], pairs[i][1], sigmoid(logits[i])
 
     def _remember(self, passages: list[str]) -> str:
         answer_id = uuid.uuid4().hex
@@ -362,8 +426,7 @@ class ResearchAssistant:
         started = time.perf_counter()
         if len(self.store) == 0:
             return self._abstain(question, config.NO_DOCUMENTS_MESSAGE, [], 0.0, started, "ask")
-        sparse = expand_query(question, self.glossary)
-        chunks = self.retriever.retrieve(question, sparse_query=sparse) if sparse else self.retriever.retrieve(question)
+        chunks = self.retrieve_for(question)
         if config.MULTI_QUERY:
             chunks = self._multi_query(question, chunks)
         best = chunks[0].relevance if chunks else 0.0
