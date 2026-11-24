@@ -461,7 +461,14 @@ def sidebar() -> list[dict[str, Any]]:
         else:
             status = pill("good", f"Ready · {health['ollama']['model']}")
         st.markdown(f'<div style="margin:.7rem 0 .9rem">{status}</div>', unsafe_allow_html=True)
-        if error:
+        if error and "too long" in error:
+            st.markdown(notice("warn", "!", "Backend is starting or busy",
+                               "It is running but did not answer in time. On the first start it loads the "
+                               "search models (up to a minute on a laptop). Wait until terminal 1 is quiet, "
+                               "then press Retry."), unsafe_allow_html=True)
+            if st.button("↻  Retry", use_container_width=True):
+                st.rerun()
+        elif error:
             st.markdown(notice("bad", "×", "Cannot reach the backend", error), unsafe_allow_html=True)
         elif not health["ollama"]["reachable"]:
             st.markdown(notice("warn", "!", "Start Ollama", "Open the Ollama app or run `ollama serve`."),
@@ -473,6 +480,8 @@ def sidebar() -> list[dict[str, Any]]:
         if st.button("＋  New chat", use_container_width=True):
             new_chat()
             st.rerun()
+        if st.session_state.session_error and not error:
+            new_chat(delete_old=False)  # backend is reachable again: start the chat that failed earlier
         if st.session_state.session_error:
             st.markdown(notice("bad", "×", "Could not start a chat", st.session_state.session_error),
                         unsafe_allow_html=True)
