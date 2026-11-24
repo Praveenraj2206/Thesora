@@ -83,7 +83,7 @@ from dataclasses import replace  # noqa: E402
 from app.ingestion.layout import table_chunks  # noqa: E402  (v2 N1)
 
 from app.generation.viewer import (  # noqa: E402  (v2 N9 / N11)
-    EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits,
+    EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits, merge_glossary,
 )
 from app.generation.trust import (  # noqa: E402  (v2 batch A)
     REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, sentence_report, short_label,
@@ -110,6 +110,15 @@ def _offsets(results) -> list[int]:
         offset += 0 if r.abstained else len(r.sources)
     return out
 
+
+
+def _merge_overlap(first: str, second: str) -> str:
+    """Join two consecutive chunks, dropping the text they share (chunks overlap by CHUNK_OVERLAP)."""
+    limit = min(len(first), len(second), config.CHUNK_OVERLAP + 50)
+    for size in range(limit, 15, -1):
+        if first.endswith(second[:size]):
+            return first + second[size:]
+    return first + " " + second
 
 class ResearchAssistant:
     """High-level API used by the FastAPI app, CLI scripts and the evaluator.
@@ -151,7 +160,7 @@ class ResearchAssistant:
         pages = load_pdf(pdf_path, doc_id=name)
         self.metadata[name] = extract_metadata(pdf_path, name)
         self.pdf_bytes[name] = pdf_path.read_bytes()
-        self.glossary.extend(build_glossary(pages, name))
+        self.glossary = merge_glossary(self.glossary, build_glossary(pages, name))
         if self._chunker is None:
             self._chunker = DocumentChunker()
         chunks = self._chunker.chunk_pages(pages)
@@ -227,14 +236,29 @@ class ResearchAssistant:
         self.history.append(answer.to_dict())
         return answer
 
-    def _context_text(self, chunk) -> str:
-        """N2c: the passage plus its neighbours in the same section, up to CHUNK_PARENT_CHARS (verification uses this too)."""
-        if not config.CONTEXT_EXPANSION:
+    def _subject(self, doc_id: str) -> str:
+        """Words naming a paper (file name, title, first author) - ignored when checking a claim's wording."""
+        meta = self.metadata.get(doc_id) or {}
+        authors = meta.get("authors") or []
+        return " ".join([Path(doc_id).stem.replace("_", " "), meta.get("title") or "",
+                         authors[0].split()[-1] if authors else ""])
+
+    def _context_text(self, chunk, rank: int = 1) -> str:
+        """N2c: for the top ``CONTEXT_EXPANSION_TOP`` passages, add the next (then previous) passage of the
+        same section, up to CHUNK_PARENT_CHARS, so an answer cut at a chunk boundary is not lost.
+        Verification uses exactly this text too."""
+        if not config.CONTEXT_EXPANSION or rank > config.CONTEXT_EXPANSION_TOP or chunk.chunk_type != "text":
             return chunk.text
-        same = [c for c in getattr(self.store, "_chunks", []) if c.doc_id == chunk.doc_id and c.section == chunk.section
-                and c.chunk_type == "text" and abs(c.chunk_index - chunk.chunk_index) <= 1]
-        joined = " ".join(c.text for c in sorted(same, key=lambda c: c.chunk_index)) or chunk.text
-        return joined[: config.CHUNK_PARENT_CHARS] if chunk.text in joined[: config.CHUNK_PARENT_CHARS] else chunk.text
+        same = {c.chunk_index: c for c in getattr(self.store, "_chunks", [])
+                if c.doc_id == chunk.doc_id and c.section == chunk.section and c.chunk_type == "text"}
+        text = chunk.text
+        for neighbour, after in ((same.get(chunk.chunk_index + 1), True), (same.get(chunk.chunk_index - 1), False)):
+            if neighbour is None:
+                continue
+            merged = _merge_overlap(text, neighbour.text) if after else _merge_overlap(neighbour.text, text)
+            if len(merged) <= config.CHUNK_PARENT_CHARS:
+                text = merged
+        return text
 
     def _multi_query(self, question: str, chunks: list) -> list:
         """N2b: up to 2 reworded variants from one short LLM call; merged by best relevance. Silent on failure."""
@@ -346,23 +370,24 @@ class ResearchAssistant:
         if not chunks or best < config.ABSTAIN_THRESHOLD:
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, best, started, "ask")
 
-        prompt_chunks = [replace(c, chunk=replace(c.chunk, text=self._context_text(c.chunk)))
-                         for c in chunks] if config.CONTEXT_EXPANSION else chunks
+        prompt_chunks = [replace(c, chunk=replace(c.chunk, text=self._context_text(c.chunk, n)))
+                         for n, c in enumerate(chunks, start=1)] if config.CONTEXT_EXPANSION else chunks
         raw = self.llm.generate(SYSTEM_PROMPT, build_ask_prompt(question, prompt_chunks), config.ASK_MAX_TOKENS)
         if is_insufficient(raw):
             return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
 
-        texts = {n: self._context_text(item.chunk) for n, item in enumerate(chunks, start=1)}
+        texts = {n: self._context_text(item.chunk, n) for n, item in enumerate(chunks, start=1)}
+        subjects = {n: self._subject(item.chunk.doc_id) for n, item in enumerate(chunks, start=1)}
         nli = self._nli()
-        verification: VerificationResult = verify_citations(raw, texts)
-        report = sentence_report(raw, texts, nli)
+        verification: VerificationResult = verify_citations(raw, texts, subjects)
+        report = sentence_report(raw, texts, nli, subjects)
         repair = None
         if config.SELF_REPAIR and any(r["status"] == "unverified" for r in report):
             before = sum(r["status"] == "unverified" for r in report)
             try:
                 retry = self.llm.generate(REPAIR_SYSTEM_PROMPT, build_ask_prompt(question, chunks), config.REPAIR_MAX_TOKENS)
                 if not is_insufficient(retry):
-                    raw, report = retry, sentence_report(retry, texts, nli)
+                    raw, report = retry, sentence_report(retry, texts, nli, subjects)
             except Exception as exc:  # repair is best effort; keep the first answer
                 logger.warning("Self-repair call failed: %s", exc)
             after = sum(r["status"] == "unverified" for r in report)
@@ -371,7 +396,7 @@ class ResearchAssistant:
             repair = {"attempted": True, "removed": removed, "before_unverified": before, "after_unverified": after}
             if not raw.strip():
                 return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
-            verification = verify_citations(raw, texts)
+            verification = verify_citations(raw, texts, subjects)
         sources = self._sources(chunks, set(verification.cited))
         for source in sources:
             check = verification.per_source.get(source.index)

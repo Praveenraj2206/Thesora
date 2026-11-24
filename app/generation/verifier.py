@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Mapping
+from typing import Mapping, Optional
 
 from app import config
 
@@ -31,6 +31,13 @@ _STOPWORDS = frozenset(
     "the a an and or but of in on at to for with by from as is are was were be been being this that these "
     "those it its their there which who whom what when where while than then also such can could may might "
     "will would should has have had not into over under between within about using used use based".split()
+)
+# Reporting words say *who* said something, not *what*: they are never in the evidence itself.
+_REPORTING_WORDS = frozenset(
+    "report reports reported reporting according state states stated show shows showed shown find finds found "
+    "note notes noted mention mentions mentioned describe describes described claim claims claimed paper papers "
+    "study studies author authors work demonstrate demonstrates demonstrated present presents presented "
+    "propose proposes proposed introduce introduces introduced".split()
 )
 _PERCENT = 100.0
 _FALLBACK_STEP_DIVISOR = 4
@@ -116,9 +123,15 @@ def _stem(word: str) -> str:
     return word[: config.VERIFY_STEM_LENGTH]
 
 
-def content_recall(claim: str, chunk: str) -> float:
-    """Share of the claim's content words (stemmed) that appear in the chunk."""
-    words = _content_words(claim)
+def content_recall(claim: str, chunk: str, subject: str = "") -> float:
+    """Share of the claim's content words (stemmed) that appear in the chunk.
+
+    Reporting words ("reports", "according") and the cited paper's own name (``subject``:
+    its title, file name and first author) are ignored, so "HySemRAG reports 99.0%" is judged
+    on "99.0%" and the words around it, not on whether the passage repeats the paper's name.
+    """
+    subject_stems = {_stem(w) for w in normalize(subject).split()}
+    words = [w for w in _content_words(claim) if w not in _REPORTING_WORDS and _stem(w) not in subject_stems]
     if not words:
         return 0.0
     chunk_stems = {_stem(w) for w in normalize(chunk).split()}
@@ -172,11 +185,11 @@ def count_uncited_sentences(answer: str) -> int:
     )
 
 
-def score_claim(claim: str, chunk_text: str) -> tuple[bool, float]:
-    """Return ``(verified, score_0_to_100)`` for one claim against one chunk."""
+def score_claim(claim: str, chunk_text: str, subject: str = "") -> tuple[bool, float]:
+    """Return ``(verified, score_0_to_100)`` for one claim against one chunk (``subject``: the cited paper's name)."""
     claim_norm, chunk_norm = normalize(claim), normalize(chunk_text)
     partial = partial_ratio(claim_norm, chunk_norm)
-    recall = content_recall(claim, chunk_text)
+    recall = content_recall(claim, chunk_text, subject)
     score = max(partial, recall * _PERCENT)
     verified = partial >= config.VERIFY_PARTIAL_THRESHOLD or recall >= config.VERIFY_RECALL_THRESHOLD
     if verified and config.VERIFY_NUMBER_GUARD and not numbers_supported(claim, chunk_text):
@@ -185,8 +198,13 @@ def score_claim(claim: str, chunk_text: str) -> tuple[bool, float]:
     return verified, score
 
 
-def verify_citations(answer: str, chunk_texts: Mapping[int, str]) -> VerificationResult:
-    """Verify every cited claim in ``answer`` against ``chunk_texts`` (1-based keys)."""
+def verify_citations(
+    answer: str, chunk_texts: Mapping[int, str], subjects: Optional[Mapping[int, str]] = None
+) -> VerificationResult:
+    """Verify every cited claim in ``answer`` against ``chunk_texts`` (1-based keys).
+
+    ``subjects`` optionally gives each source's paper name (title, file name, first author)."""
+    subjects = subjects or {}
     result = VerificationResult()
     invalid: set[int] = set()
     outcomes: dict[int, list[tuple[bool, float]]] = {}
@@ -200,9 +218,10 @@ def verify_citations(answer: str, chunk_texts: Mapping[int, str]) -> Verificatio
             for number in valid:
                 outcomes.setdefault(number, [])  # too short to judge; cited but not penalised
             continue
-        checks = {number: score_claim(claim, chunk_texts[number]) for number in valid}
+        checks = {number: score_claim(claim, chunk_texts[number], subjects.get(number, "")) for number in valid}
         if len(valid) > 1 and not all(ok for ok, _ in checks.values()):
-            joint_ok, joint_score = score_claim(claim, " ".join(chunk_texts[n] for n in valid))
+            joint_ok, joint_score = score_claim(claim, " ".join(chunk_texts[n] for n in valid),
+                                                " ".join(subjects.get(n, "") for n in valid))
             if joint_ok:  # supported by the cited passages taken together
                 checks = {n: (True, max(score, joint_score)) for n, (_, score) in checks.items()}
         for number, check in checks.items():

@@ -36,7 +36,7 @@ A cross-encoder (`ms-marco-MiniLM-L-6-v2`) re-scores the 8 candidates; the best 
 
 <br>
 
-Every `[n]` claim is checked against passage *n* with fuzzy matching and content-word recall; every number in a claim must appear in the passage (number guard). Sources show ✓ Verified or ! Unverified. Code: `app/generation/verifier.py`.
+Every `[n]` claim is checked against passage *n* with fuzzy matching and content-word recall; every number in a claim must appear in the passage (number guard). The cited paper's own name and reporting words ("reports", "according to") are not required to be in the passage. Sources show ✓ Verified or ! Unverified. Code: `app/generation/verifier.py`.
 
 </details>
 
@@ -63,7 +63,7 @@ If no passage is relevant enough (best relevance below 0.35) Thesora refuses **w
 
 <br>
 
-**Compare papers** mode builds a table with one row per paper plus a **Research Gaps** section; passages are picked round-robin so every paper is covered.
+**Compare papers** mode builds a table with one row per paper plus a **Research Gaps** section. Each paper is searched separately and its passages are picked round-robin, so every uploaded paper gets a row (long papers can no longer crowd short ones out). Wide tables wrap inside the chat column.
 
 </details>
 
@@ -497,7 +497,7 @@ Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off
 
 <br>
 
-Each table becomes its own passage (`chunk_type="table"`, markdown rows) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
+Each table becomes its own passage (`chunk_type="table"`, markdown rows) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Tightly justified two-column lines no longer come out glued ("Priortoprocessingaquery"): word spaces are rebuilt from the gaps between letters (`PDF_SPACE_GAP_EM=0.08`), and the PDF highlight matches letter by letter when the PDF itself has no space characters. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
 
 </details>
 
@@ -506,7 +506,7 @@ Each table becomes its own passage (`chunk_type="table"`, markdown rows) with pa
 
 <br>
 
-(a) Contextual headers: "Title › Section" added to the search text only — **off**: measured worse for hybrid search (0.80 → 0.70). `CONTEXT_HEADERS=1`. (b) Multi-query: one short model call writes 2 reworded questions, results merged — off (extra call). `MULTI_QUERY=1`. (c) Context expansion: the model sees the passage plus its neighbours, and verification uses the same text — off (not measured with the model). `CONTEXT_EXPANSION=1`.
+(a) Contextual headers: "Title › Section" added to the search text only — **off**: measured worse for hybrid search (0.80 → 0.70). `CONTEXT_HEADERS=1`. (b) Multi-query: one short model call writes 2 reworded questions, results merged — off (extra call). `MULTI_QUERY=1`. (c) Context expansion — **on** for the 2 best passages: the model sees each one plus the next (then previous) passage of the same section, and verification uses the same text, so an answer cut at a chunk boundary is not lost. Limited to the top 2 to keep prompts short on a CPU (+58% context instead of +116%). `CONTEXT_EXPANSION=0` turns it off, `CONTEXT_EXPANSION_TOP` changes how many.
 
 </details>
 
@@ -524,7 +524,7 @@ Each Compare cell is split into claims and checked against that paper's own pass
 
 <br>
 
-Title, authors, year and DOI are detected at upload (marked auto-detected). Sources show "Smith et al., 2023 · p.4 · Results". Sidebar: **Download .bib** and **Download notes (.md)** (verified citations only, no model call). Correct details with `PATCH /sessions/{id}/documents/{doc_id}/metadata`.
+Title, authors, year and DOI are detected at upload (marked auto-detected). Rotated arXiv stamps and running headers such as "A PREPRINT" are skipped; a title that starts after a logo gets the file name in front; the year comes from the arXiv number, then the page-1 header (journal line, conference date, ©, preprint date). Sources show "Smith et al., 2023 · p.4 · Results". Sidebar: **Download .bib** and **Download notes (.md)** (verified citations only, no model call). Correct details with `PATCH /sessions/{id}/documents/{doc_id}/metadata`.
 
 </details>
 
@@ -587,7 +587,7 @@ If a sentence fails the check, the model gets one stricter retry; anything still
 
 <br>
 
-**💡 Explain** opens a What / Why / How / Example explanation from that answer's passages only, always labelled "Plain-English explanation — not evidence"; follow-up questions supported. The sidebar **Glossary** lists abbreviations found in the papers (scispaCy's Schwartz–Hearst detector, no model download); their long forms are added to keyword search.
+**💡 Explain** opens a What / Why / How / Example explanation from that answer's passages only, always labelled "Plain-English explanation — not evidence"; follow-up questions supported. The sidebar **Glossary** lists abbreviations found in the papers (scispaCy's Schwartz–Hearst detector, no model download); their long forms are added to keyword search. Each term appears once per chat ("LLM — in 4 papers"), and "LLMs" counts as "LLM".
 
 </details>
 
@@ -596,7 +596,7 @@ If a sentence fails the check, the model gets one stricter retry; anything still
 
 <br>
 
-A third mode: for a topic, each paper's position is a sentence quoted word for word (no model call), with page and section. Conflicts: ⚠️ Numbers differ (severity 2), ⚠️ Contradiction (severity 3, needs N8), ~ Wording differs (severity 1, hidden unless shown).
+A third mode: for a topic, each paper's position is a sentence quoted word for word (no model call), with page and section. Conflicts: ⚠️ Numbers differ (severity 2), ⚠️ Contradiction (severity 3, needs N8), ~ Wording differs (severity 1: not a disagreement, listed only when **Also list pairs that are only worded differently** is switched on). Enter one topic at a time. If only one paper discusses the topic, Thesora says so instead of reporting "no conflicts".
 
 </details>
 

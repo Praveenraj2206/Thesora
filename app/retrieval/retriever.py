@@ -229,30 +229,65 @@ class HybridRetriever:
         floor = config.RELEVANCE_FLOOR if min_relevance is None else min_relevance
         return apply_relevance_floor(scored[:final_k], floor)
 
+    def _per_document_candidates(self, query: str, query_vector: np.ndarray, pool: int) -> list[RetrievedChunk]:
+        """Dense + BM25 search run separately inside each paper, fused per paper with RRF.
+
+        A single shared pool lets a few long papers crowd the others out; ranking within each
+        paper guarantees every uploaded paper contributes its own best passages.
+        """
+        total = len(self._store)
+        dense_all = self.dense_search(query_vector, total)
+        sparse_all = self.sparse_search(self._sparse_query or query, total)
+        doc_of = {i: self._store.get_chunk(i).doc_id for i, _ in dense_all}
+        for i, _ in sparse_all:
+            doc_of.setdefault(i, self._store.get_chunk(i).doc_id)
+        dense_by_doc: dict[str, list[tuple[int, float]]] = {}
+        sparse_by_doc: dict[str, list[tuple[int, float]]] = {}
+        for i, score in dense_all:
+            bucket = dense_by_doc.setdefault(doc_of[i], [])
+            if len(bucket) < pool:
+                bucket.append((i, score))
+        for i, score in sparse_all:
+            bucket = sparse_by_doc.setdefault(doc_of[i], [])
+            if len(bucket) < pool:
+                bucket.append((i, score))
+        candidates: list[RetrievedChunk] = []
+        for doc_id in dict.fromkeys(list(dense_by_doc) + list(sparse_by_doc)):
+            dense, sparse = dense_by_doc.get(doc_id, []), sparse_by_doc.get(doc_id, [])
+            dense_scores, sparse_scores = dict(dense), dict(sparse)
+            fused = reciprocal_rank_fusion([[i for i, _ in dense], [i for i, _ in sparse]], top_k=pool)
+            for index, rrf_score in fused:
+                dense_score = dense_scores.get(index)
+                if dense_score is None:
+                    dense_score = float(np.dot(query_vector.reshape(-1), self._store.reconstruct(index)))
+                candidates.append(RetrievedChunk(chunk=self._store.get_chunk(index), store_index=index,
+                                                 dense_score=dense_score, bm25_score=sparse_scores.get(index),
+                                                 rrf_score=rrf_score))
+        return candidates
+
     def retrieve_across_documents(
         self,
         query: str,
         per_doc: int = config.SYNTH_CHUNKS_PER_DOC,
         max_total: int = config.SYNTH_MAX_CHUNKS,
-        pool: int = config.SYNTH_CANDIDATE_POOL,
+        pool: int = config.SYNTH_DOC_POOL,
     ) -> list[RetrievedChunk]:
-        """Retrieve the best chunks per paper so every relevant document is covered.
+        """Retrieve the best chunks per paper so every uploaded paper is covered.
 
-        A wide candidate pool is fused and reranked, irrelevant chunks are dropped,
-        then chunks are picked round-robin across documents (best paper first).
+        Candidates are searched inside each paper, reranked, and picked round-robin
+        (best paper first). Each paper keeps at least its best passage so it gets a row;
+        further passages must pass the relevance floor.
         """
         if len(self._store) == 0 or not query.strip():
             return []
         query_vector = self._embedder.embed_query(query)
-        candidates = self._candidates(query, query_vector, pool, pool, pool)
-        scored = [
-            c for c in self._score(query, candidates) if c.relevance >= config.SYNTH_MIN_CHUNK_RELEVANCE
-        ]
+        scored = self._score(query, self._per_document_candidates(query, query_vector, pool))
         scored.sort(key=lambda c: c.relevance, reverse=True)
         by_doc: dict[str, list[RetrievedChunk]] = {}
         for candidate in scored:
             bucket = by_doc.setdefault(candidate.chunk.doc_id, [])
-            if len(bucket) < per_doc:
+            keep = not bucket and config.SYNTH_COVER_ALL_PAPERS
+            if len(bucket) < per_doc and (keep or candidate.relevance >= config.SYNTH_MIN_CHUNK_RELEVANCE):
                 bucket.append(candidate)
         selected: list[RetrievedChunk] = []
         for depth in range(per_doc):

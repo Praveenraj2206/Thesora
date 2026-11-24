@@ -193,7 +193,17 @@ div:has(> .stElementContainer .th-card-mark) {
 }
 
 /* tables (synthesis) */
-[data-testid="stMarkdownContainer"] table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: .4rem 0 1rem; }
+/* Wide tables (6+ papers, long model names) stay inside the chat column: cells wrap, and anything
+   still too wide scrolls inside the card instead of pushing the page sideways. */
+[data-testid="stMarkdownContainer"]:has(table) { max-width: 100%; overflow-x: auto; }
+[data-testid="stMarkdownContainer"] table {
+  border-collapse: collapse; width: 100%; max-width: 100%; table-layout: fixed;
+  font-size: .9rem; margin: .4rem 0 1rem;
+}
+[data-testid="stMarkdownContainer"] th, [data-testid="stMarkdownContainer"] td {
+  overflow-wrap: anywhere; word-break: break-word; hyphens: auto;
+}
+[data-testid="stMarkdownContainer"] th:first-child { width: 22%; }
 [data-testid="stMarkdownContainer"] th {
   background: var(--accent-soft); color: var(--text); text-align: left; font-weight: 600;
   border: 1px solid var(--border); padding: .55rem .7rem;

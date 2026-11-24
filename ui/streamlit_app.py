@@ -380,16 +380,32 @@ def render_agree(data: dict[str, Any]) -> None:
         if not data.get("rows"):
             st.markdown(notice("warn", "?", "No paper discusses this topic", config.ABSTAIN_MESSAGE), unsafe_allow_html=True)
             return
+        rows = data["rows"]
         st.markdown("| Paper | Position (quoted) | Passage |\n| --- | --- | --- |\n" + "\n".join(
-            f"| {r['label']} | {r['position'].replace('|', '/')} | p.{r['page']} {r['section']} |" for r in data["rows"]))
-        show_all = st.toggle("Show wording-only differences", key=_key())
+            f"| {r['label'].split(' · ')[0]} | {r['position'].replace('|', '/')} | p.{r['page']} {r['section']} |"
+            for r in rows))
+        if len(rows) < 2:
+            st.markdown(notice("warn", "1", "Only one paper discusses this topic",
+                               "There is nothing to compare it with, so this is not an agreement. Try a broader "
+                               "topic (one topic at a time), or ask it as a normal question."),
+                        unsafe_allow_html=True)
+            return
+        names = {r["doc_id"]: r["label"].split(" · ")[0] for r in rows}
+        show_all = st.toggle(
+            "Also list pairs that are only worded differently", key=_key(),
+            help="Off (default): only real conflicts are listed: different numbers for the same thing, or "
+                 "statements that contradict each other (needs the meaning check). On: also lists every other "
+                 "pair of papers, whose sentences simply use different words. That is not a disagreement.")
         shown = [c for c in data.get("conflicts", []) if show_all or c["severity"] > 1]
         if not shown:
-            st.markdown("**✓ No conflicts found** between the papers' statements.")
+            st.markdown(f"**✓ No conflicting numbers found** between the {len(rows)} papers' statements.")
         for c in shown:
             icon = {3: "⚠️ Contradiction", 2: "⚠️ Numbers differ", 1: "~ Wording differs"}[c["severity"]]
-            with st.expander(f"{icon} · {c['papers'][0]} vs {c['papers'][1]}"):
+            a, b = (names.get(p, p) for p in c["papers"])
+            with st.expander(f"{icon} · {a} vs {b}"):
                 st.markdown(f"{esc(c['reason'])}\n\n> {esc(c['quotes'][0])}\n\n> {esc(c['quotes'][1])}")
+                if c["severity"] == 2:
+                    st.caption("The papers may measure different setups; read both passages before calling it a conflict.")
 
 
 def render_turn(turn: dict[str, Any]) -> None:
@@ -540,7 +556,10 @@ def sidebar() -> list[dict[str, Any]]:
             terms = (gl or {}).get("glossary", [])
             with st.expander(f"Glossary ({len(terms)})"):
                 for g in terms:
-                    st.markdown(f"**{esc(g['abbr'])}** — {esc(g['long_form'])} · {esc(g['doc_id'])} p.{g['page']}")
+                    papers = g.get("papers") or [g["doc_id"]]
+                    where = (f"{Path(papers[0]).stem} p.{g['page']}" if len(papers) == 1
+                             else f"in {len(papers)} papers (first: {Path(papers[0]).stem} p.{g['page']})")
+                    st.markdown(f"**{esc(g['abbr'])}** — {esc(g['long_form'])} · {esc(where)}")
                 if not terms:
                     st.caption("No abbreviations defined in these papers.")
             try:
@@ -684,7 +703,7 @@ def main() -> None:
     # The chat box is pinned to the bottom wherever it is created; reading it first lets the welcome
     # cards disappear as soon as the first question is sent.
     placeholder = {"ask": "Ask a question about your papers…", "compare": "Topic to compare across papers…",
-                   "agree": "Topic to check: do the papers agree?"}[mode]
+                   "agree": "One topic to check, e.g. citation hallucination"}[mode]
     prompt = st.chat_input(placeholder, disabled=not st.session_state.session_id)
     pending = st.session_state.pop("pending_prompt", None) or prompt
 

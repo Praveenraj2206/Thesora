@@ -106,18 +106,52 @@ def _build_pages(pages_lines: list[list[_Line]], doc_id: str) -> list[PageText]:
     return pages
 
 
+def _span_chars(span: dict) -> list[tuple[str, float, float]]:
+    """(character, x0, x1) for one rawdict span; falls back to a single pseudo-char for 'dict' spans."""
+    chars = span.get("chars")
+    if chars is None:
+        x0, _, x1, _ = span.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        return [(span.get("text", ""), float(x0), float(x1))]
+    return [(c.get("c", ""), float(c["bbox"][0]), float(c["bbox"][2])) for c in chars]
+
+
+def line_text(raw_line: dict) -> str:
+    """Text of one PyMuPDF line with word spaces rebuilt from the gaps between letters.
+
+    PyMuPDF only inserts a space when the gap between two glyphs is at least ~0.15 em, so the
+    tightly justified lines of two-column papers come out glued ("Priortoprocessingaquery").
+    Here a space is added wherever the horizontal gap exceeds ``PDF_SPACE_GAP_EM`` x font size.
+    """
+    out: list[str] = []
+    prev_x1: Optional[float] = None
+    for span in raw_line.get("spans", []):
+        size = float(span.get("size", 0.0)) or 1.0
+        for ch, x0, x1 in _span_chars(span):
+            if not ch:
+                continue
+            if prev_x1 is not None and out and not out[-1].isspace() and not ch.isspace():
+                if x0 - prev_x1 > config.PDF_SPACE_GAP_EM * size:
+                    out.append(" ")
+            out.append(ch)
+            prev_x1 = x1
+    return _WHITESPACE_RE.sub(" ", "".join(out)).strip()
+
+
 def _extract_lines_pymupdf(page: object) -> list[_Line]:
     """Extract ordered lines (with font info) from one PyMuPDF page."""
-    layout = page.get_text("dict", sort=True)  # type: ignore[attr-defined]
+    layout = page.get_text("rawdict", sort=True)  # type: ignore[attr-defined]
     lines: list[_Line] = []
     for block in layout.get("blocks", []):
         if block.get("type", 0) != 0:
             continue
         for raw_line in block.get("lines", []):
-            spans = [s for s in raw_line.get("spans", []) if s.get("text", "").strip()]
+            spans = [s for s in raw_line.get("spans", []) if any(not c.get("c", " ").isspace() for c in s.get("chars", []))
+                     or s.get("text", "").strip()]
             if not spans:
                 continue
-            text = _WHITESPACE_RE.sub(" ", "".join(s["text"] for s in spans)).strip()
+            text = line_text({"spans": spans})
+            if not text:
+                continue
             size = max(float(s.get("size", 0.0)) for s in spans)
             bold = all(
                 bool(int(s.get("flags", 0)) & _BOLD_FLAG) or "bold" in str(s.get("font", "")).lower()

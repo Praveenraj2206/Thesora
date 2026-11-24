@@ -98,9 +98,10 @@ def best_premise(passage: str, claim: str, n: int = config.NLI_PREMISE_SENTENCES
 
 
 # ----------------------------------------------------------------------------- N5 sentences
-def sentence_report(answer: str, chunk_texts: Mapping[int, str], nli: Optional[NLIChecker] = None) -> list[dict[str, Any]]:
+def sentence_report(answer: str, chunk_texts: Mapping[int, str], nli: Optional[NLIChecker] = None,
+                    subjects: Optional[Mapping[int, str]] = None) -> list[dict[str, Any]]:
     """One entry per answer sentence: text, citations, status (verified|weak|unverified|uncited), score, meaning."""
-    report = []
+    report, subjects = [], subjects or {}
     for segment in _segments(answer):
         text = CITATION_RE.sub("", segment).strip(" -*•|#>\t")
         if not text:
@@ -111,7 +112,7 @@ def sentence_report(answer: str, chunk_texts: Mapping[int, str], nli: Optional[N
             continue
         best_ok, best_score, best_n = False, 0.0, cites[0]
         for n in cites:
-            ok, score = score_claim(text, chunk_texts[n])
+            ok, score = score_claim(text, chunk_texts[n], subjects.get(n, ""))
             if (ok, score) > (best_ok, best_score):
                 best_ok, best_score, best_n = ok, score, n
         meaning = nli.judge(best_premise(chunk_texts[best_n], text), text) if nli is not None else None
@@ -192,36 +193,144 @@ def verify_table(answer: str, passages: Sequence[Mapping[str, Any]], nli: Option
 
 
 # ----------------------------------------------------------------------------- N4 metadata
+_ARXIV_ID_RE = re.compile(r"arXiv:\s*(\d{2})(\d{2})\.\d{4,5}", re.IGNORECASE)
+_HEADER_JUNK_RE = re.compile(
+    r"^(arxiv\b|a\s*p\s*re\s*print\b|preprint\b|proceedings\b|article$|nature\b.*\|"
+    r"|vol(ume)?\b|©|\(c\)|copyright|https?://|www\.|doi\b|accepted\b|published\b|received\b"
+    r"|under review|journal\b|page \d|\d+$)",
+    re.IGNORECASE,
+)
+_ABSTRACT_RE = re.compile(r"^(abstract|a\s?b\s?s\s?t\s?r\s?a\s?c\s?t|1\.?\s+introduction|introduction)\b", re.IGNORECASE)
+_NAME_RE = re.compile(r"^[A-Z][\w'’.\-]*(?:\s+[A-Z][\w'’.\-]*){1,3}$")
+_NOT_NAME_WORDS = frozenset(
+    "university institute department school laboratory lab college center centre inc llc ltd "
+    "corporation research foundation hospital abstract introduction preprint article house group team "
+    "independent researcher program programme project company department faculty academy "
+    "united states kingdom republic county province city hampshire york jersey paper working conceptual draft".split()
+)
+_AUTHOR_MARKS_RE = re.compile(r"[*∗†‡§¶#✉\d]")
+_BIG_GAP = "\u2003"  # marks a wide horizontal gap between two author names on one line
+
+
+def _page_lines(page: Any) -> list[dict[str, Any]]:
+    """Horizontal text lines of one page: text (spaces rebuilt), size, top y; wide gaps kept as a marker."""
+    from app.ingestion.pdf_loader import line_text
+
+    lines = []
+    for block in page.get_text("rawdict", sort=True).get("blocks", []):
+        for raw in block.get("lines", []):
+            direction = raw.get("dir", (1, 0))
+            if abs(direction[0] - 1) > 0.01:  # rotated text: arXiv side stamps, margin notes
+                continue
+            spans = [sp for sp in raw.get("spans", []) if any(not c["c"].isspace() for c in sp.get("chars", []))]
+            if not spans:
+                continue
+            pieces, prev_x1 = [], None
+            for sp in spans:
+                x0 = sp["chars"][0]["bbox"][0] if sp.get("chars") else sp["bbox"][0]
+                if prev_x1 is not None and x0 - prev_x1 > config.METADATA_NAME_GAP_EM * float(sp.get("size", 10)):
+                    pieces.append(_BIG_GAP)
+                pieces.append(line_text({"spans": [sp]}))
+                prev_x1 = sp["chars"][-1]["bbox"][2] if sp.get("chars") else sp["bbox"][2]
+            text = re.sub(r"\s*\u2003\s*", _BIG_GAP, re.sub(r"[ \t]+", " ", " ".join(pieces).strip()))
+            if text.strip(_BIG_GAP):
+                lines.append({"text": text, "size": max(float(sp.get("size", 0)) for sp in spans),
+                              "y": float(raw["bbox"][1]), "x": float(raw["bbox"][0])})
+    lines.sort(key=lambda ln: (round(ln["y"] / 3), ln["x"]))  # reading order: top to bottom, then left to right
+    return lines
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.replace(_BIG_GAP, " ").split())
+
+
+def _detect_year(all_text: str, header_text: str) -> Optional[int]:
+    """arXiv identifier first (2601.xxxxx -> 2026), then the latest year in the page-1 header
+    (journal line, conference dates, ©, preprint date), then the most frequent year on pages 1-2."""
+    import datetime
+
+    latest = datetime.date.today().year + 1
+    arxiv = _ARXIV_ID_RE.search(all_text)
+    if arxiv and 7 <= int(arxiv.group(1)) and 1 <= int(arxiv.group(2)) <= 12:
+        year = 2000 + int(arxiv.group(1))
+        if year <= latest:
+            return year
+    header_years = [int(y) for y in _YEAR_RE.findall(header_text) if int(y) <= latest]
+    if header_years:
+        return max(header_years)
+    years = [y for y in _YEAR_RE.findall(all_text) if int(y) <= latest]
+    return int(max(set(years), key=years.count)) if years else None
+
+
+def _clean_title(title: str, stem: str) -> str:
+    title = _plain(title)
+    if title[:1] in ":;-–—" and stem:  # title starts after a logo (e.g. "[logo]: Organized ...")
+        title = f"{stem}{title if title.startswith(':') else ': ' + title.lstrip(';-–— ')}"
+    return title.strip(" :;-–—")
+
+
+def _authors_from(lines: Sequence[Mapping[str, Any]]) -> list[str]:
+    authors: list[str] = []
+    for line in lines:
+        text = line["text"]
+        if _ABSTRACT_RE.match(_plain(text)) or len(_plain(text)) > config.METADATA_AUTHOR_MAX_CHARS:
+            break
+        for part in re.split(r",|;|&|\band\b|" + _BIG_GAP, text):
+            name = " ".join(_AUTHOR_MARKS_RE.sub(" ", part).split()).strip(" .")
+            words = {w.lower().strip(".,") for w in name.split()}
+            if _NAME_RE.match(name) and not words & _NOT_NAME_WORDS and name not in authors:
+                authors.append(name)
+        if len(authors) >= 8:
+            break
+    return authors[:8]
+
+
 def extract_metadata(pdf_path: str | Path, doc_id: str) -> dict[str, Any]:
-    """Title (largest font on page 1, else PDF metadata), authors, year, DOI. Every field is marked auto."""
-    meta: dict[str, Any] = {"doc_id": doc_id, "title": Path(doc_id).stem, "authors": [], "year": None, "doi": None,
+    """Title, authors, year and DOI from page 1 (best effort; every field is marked auto-detected).
+
+    Skips rotated arXiv stamps and running headers such as "A PREPRINT", falls back to the PDF's
+    own title field and then the file name; the year comes from the arXiv id or the page-1 header.
+    """
+    stem = Path(doc_id).stem.replace("_", " ").strip()
+    meta: dict[str, Any] = {"doc_id": doc_id, "title": stem, "authors": [], "year": None, "doi": None,
                             "auto": True, "edited": False}
     try:
         import fitz
 
         with fitz.open(str(pdf_path)) as pdf:
-            first = pdf[0].get_text("dict") if pdf.page_count else {"blocks": []}
-            spans = [(s["size"], s["text"].strip(), b_i) for b_i, b in enumerate(first.get("blocks", []))
-                     for line in b.get("lines", []) for s in line.get("spans", []) if s.get("text", "").strip()]
-            if spans:
-                top = max(size for size, _, _ in spans)
-                title = " ".join(t for size, t, _ in spans if size >= top - 0.5)[: config.METADATA_TITLE_MAX_CHARS]
+            if not pdf.page_count:
+                return meta
+            first = pdf[0]
+            lines = _page_lines(first)
+            abstract_at = next((i for i, ln in enumerate(lines) if _ABSTRACT_RE.match(_plain(ln["text"]))), None)
+            limit_y = first.rect.height * config.METADATA_HEADER_FRACTION
+            head = lines[:abstract_at] if abstract_at is not None else [ln for ln in lines if ln["y"] <= limit_y]
+            candidates = [i for i, ln in enumerate(head)
+                          if not _HEADER_JUNK_RE.match(_plain(ln["text"])) and "@" not in ln["text"]
+                          and sum(ch.isalpha() for ch in ln["text"]) >= 3]
+            if candidates:
+                top = max(head[i]["size"] for i in candidates)
+                first_i = next(i for i in candidates if head[i]["size"] >= top - 0.5)
+                last_i = first_i
+                while (last_i + 1 < len(head) and head[last_i + 1]["size"] >= top - 0.5
+                       and head[last_i + 1]["y"] - head[last_i]["y"] <= config.METADATA_TITLE_LINE_GAP * top):
+                    last_i += 1
+                title = _clean_title(" ".join(head[i]["text"] for i in range(first_i, last_i + 1)), stem)
                 if len(title.split()) >= 3:
-                    meta["title"] = title
-                title_block = max(b for size, _, b in spans if size >= top - 0.5)
-                after = [t for size, t, b in spans if b == title_block + 1]
-                if after:
-                    names = re.split(r",| and |;", " ".join(after)[: config.METADATA_AUTHOR_MAX_CHARS])
-                    meta["authors"] = [n.strip(" *0123456789") for n in names if 1 < len(n.split()) <= 4][:8]
+                    meta["title"] = title[: config.METADATA_TITLE_MAX_CHARS]
+                meta["authors"] = _authors_from(head[last_i + 1:last_i + 1 + config.METADATA_AUTHOR_LINES])
             info = pdf.metadata or {}
-            if info.get("title") and meta["title"] == Path(doc_id).stem:
-                meta["title"] = info["title"].strip()
+            info_title = (info.get("title") or "").strip()
+            if meta["title"] == stem and len(info_title.split()) >= 3 and not re.match(
+                    r"(microsoft word|untitled|\S+\.(docx?|tex|pdf))", info_title, re.IGNORECASE):
+                meta["title"] = info_title
             if info.get("author") and not meta["authors"]:
                 meta["authors"] = [a.strip() for a in re.split(r",|;| and ", info["author"]) if a.strip()][:8]
-            text = " ".join(pdf[i].get_text() for i in range(min(2, pdf.page_count)))
-            years = _YEAR_RE.findall(text)
-            meta["year"] = int(max(set(years), key=years.count)) if years else None
-            doi = _DOI_RE.search(text)
+            all_text = " ".join(pdf[i].get_text() for i in range(min(2, pdf.page_count)))
+            header_text = " ".join(_plain(ln["text"]) for ln in head) + " " + " ".join(
+                _plain(ln["text"]) for ln in lines if _HEADER_JUNK_RE.match(_plain(ln["text"])))
+            meta["year"] = _detect_year(all_text, header_text)
+            doi = _DOI_RE.search(all_text)
             meta["doi"] = doi.group(0).rstrip(".,;)") if doi else None
     except Exception as exc:  # metadata is best effort; the file name stays the title
         logger.info("Metadata extraction failed for %s: %s", doc_id, exc)

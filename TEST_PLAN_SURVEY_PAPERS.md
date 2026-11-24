@@ -26,7 +26,8 @@ python scripts/check_extraction.py --docs "C:/thesora_survey"
 
 **Pass:** every PDF shows pages > 0, most of them two-column, and some tables found (Ai2 and PaperQA have the clearest ones). If a PDF says "no text" or "scanned", tell me which one.
 
-4. Start the app as usual (terminal 1: `uvicorn`, terminal 2: `streamlit`). Open a **new chat** and upload all 6 PDFs in one go.
+4. After pulling new code, always open a **new chat** and upload the PDFs again: the text is extracted at upload.
+5. Start the app as usual (terminal 1: `uvicorn`, terminal 2: `streamlit`). Open a **new chat** and upload all 6 PDFs in one go.
 
 ---
 
@@ -154,6 +155,8 @@ It can't be forced on demand. The unit tests prove the logic: `python -m pytest 
 
 ### N12 · Agree? mode
 **Why:** these papers report different numbers on the same topic, so it's a real test.
+
+**Run each topic on its own** (type one topic, press Enter, then the next).
 
 | # | Topic (Agree? mode) | Pass looks like |
 |---|---|---|

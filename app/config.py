@@ -63,6 +63,7 @@ SESSION_TTL_MIN = _env_int("SESSION_TTL_MIN", 120)  # idle sessions are discarde
 MAX_SESSIONS = _env_int("MAX_SESSIONS", 20)  # oldest idle session is evicted beyond this
 
 # --------------------------------------------------------------------------- ingestion
+PDF_SPACE_GAP_EM = _env_float("PDF_SPACE_GAP_EM", 0.08)  # gap (x font size) that counts as a word space
 CHUNK_SIZE = _env_int("CHUNK_SIZE", 512)
 CHUNK_OVERLAP = _env_int("CHUNK_OVERLAP", 100)
 MIN_CHUNK_CHARS = _env_int("MIN_CHUNK_CHARS", 30)
@@ -139,6 +140,8 @@ REFINE_WORD_SLACK = 20  # replies up to this many words over the instruction are
 SYNTH_CHUNKS_PER_DOC = _env_int("SYNTH_CHUNKS_PER_DOC", 3)
 SYNTH_MAX_CHUNKS = _env_int("SYNTH_MAX_CHUNKS", 24)
 SYNTH_CANDIDATE_POOL = _env_int("SYNTH_CANDIDATE_POOL", 60)
+SYNTH_DOC_POOL = _env_int("SYNTH_DOC_POOL", 8)  # candidates searched inside each paper for Compare
+SYNTH_COVER_ALL_PAPERS = _env_str("SYNTH_COVER_ALL_PAPERS", "1") == "1"  # every paper keeps its best passage
 SYNTH_MIN_CHUNK_RELEVANCE = _env_float("SYNTH_MIN_CHUNK_RELEVANCE", 0.1)
 
 # --------------------------------------------------------------------------- API / UI
@@ -171,6 +174,10 @@ SELF_REPAIR = _env_str("SELF_REPAIR", "1") == "1"  # one stricter retry, then dr
 REPAIR_MAX_TOKENS = _env_int("REPAIR_MAX_TOKENS", 600)
 METADATA_TITLE_MAX_CHARS = 250
 METADATA_AUTHOR_MAX_CHARS = 300
+METADATA_AUTHOR_LINES = 12  # lines after the title scanned for author names
+METADATA_HEADER_FRACTION = 0.45  # page-1 share treated as the header when no Abstract heading is found
+METADATA_TITLE_LINE_GAP = 2.2  # a bigger jump (x title size) between lines ends the title
+METADATA_NAME_GAP_EM = 1.0  # a wider gap between spans separates two names on one line
 LARGE_FILE_WARN_MB = _env_int("LARGE_FILE_WARN_MB", 5)  # N7: UI warns above this size
 MAX_SESSION_PDF_MB = _env_int("MAX_SESSION_PDF_MB", 400)  # N7: total PDF size allowed per chat
 PARTIAL_ANSWERS = _env_str("PARTIAL_ANSWERS", "1") == "1"  # N6: answer multi-part questions part by part
@@ -195,6 +202,7 @@ CONTEXT_HEADERS = _env_str("CONTEXT_HEADERS", "0") == "1"  # N2a (default set fr
 MULTI_QUERY = _env_str("MULTI_QUERY", "0") == "1"  # N2b: off by default (one extra LLM call)
 MULTI_QUERY_VARIANTS = _env_int("MULTI_QUERY_VARIANTS", 2)
 MULTI_QUERY_MAX_TOKENS = _env_int("MULTI_QUERY_MAX_TOKENS", 60)
-CONTEXT_EXPANSION = _env_str("CONTEXT_EXPANSION", "0") == "1"  # N2c: give the LLM the passage plus its neighbours
+CONTEXT_EXPANSION = _env_str("CONTEXT_EXPANSION", "1") == "1"  # N2c: give the LLM the top passages plus their neighbours
+CONTEXT_EXPANSION_TOP = _env_int("CONTEXT_EXPANSION_TOP", 2)  # only the best N passages are expanded (keeps prompts short)
 CHUNK_PARENT_CHARS = _env_int("CHUNK_PARENT_CHARS", 1200)
 AGREE_NUMBER_WINDOW = _env_int("AGREE_NUMBER_WINDOW", 6)  # words around a number that name its metric
