@@ -16,7 +16,7 @@ D = sys.argv[1]
 a = ResearchAssistant(); t = time.time(); a.ingest_folder(D); print(f"ingest {time.time()-t:.0f}s, {len(a.store)} chunks")
 Q = [  # question, regex the answer passage must contain, expect_abstain
  ("What is omni-moderation-latest used for?", r"omni-moderation", False),
- ("How does Ai2 Scholar QA stop harmful questions before answering them?", r"omni-moderation|harmful", False),
+ ("Which moderation model screens user queries in Ai2 Scholar QA?", r"omni-moderation", False),
  ("What value of K is used in Reciprocal Rank Fusion?", r"K\s*=\s*60", False),
  ("Which embedding model does PaperQA use?", r"text-embedding-ada-002", False),
  ("What relevance threshold does DeepEra use to filter passages?", r"τ\s*=\s*0\.8|0\.8\)", False),

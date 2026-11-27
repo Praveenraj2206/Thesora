@@ -286,14 +286,23 @@ class ResearchAssistant:
 
     def _context_text(self, chunk, rank: int = 1) -> str:
         """N2c: for the top ``CONTEXT_EXPANSION_TOP`` passages, add the next (then previous) passage of the
-        same section, up to CHUNK_PARENT_CHARS, so an answer cut at a chunk boundary is not lost.
+        paper, up to CHUNK_PARENT_CHARS, so an answer cut at a chunk boundary is not lost.
         Verification uses exactly this text too."""
         if not config.CONTEXT_EXPANSION or rank > config.CONTEXT_EXPANSION_TOP or chunk.chunk_type != "text":
             return chunk.text
-        same = {c.chunk_index: c for c in getattr(self.store, "_chunks", [])
-                if c.doc_id == chunk.doc_id and c.section == chunk.section and c.chunk_type == "text"}
+        # chunk_index restarts on every page, so neighbours are found by position in the paper (store order),
+        # which also joins a sentence that continues on the next page.
+        ordered = [c for c in getattr(self.store, "_chunks", []) if c.doc_id == chunk.doc_id and c.chunk_type == "text"]
+        here = next((i for i, c in enumerate(ordered) if c.chunk_id == chunk.chunk_id), None)
+        if here is None:
+            return chunk.text
+        nxt = ordered[here + 1] if here + 1 < len(ordered) else None
+        prev = ordered[here - 1] if here > 0 else None
+        order = ((nxt, True), (prev, False))
+        if chunk.text[:1].islower():  # starts mid-sentence: the sentence's subject is in the previous passage
+            order = order[::-1]
         text = chunk.text
-        for neighbour, after in ((same.get(chunk.chunk_index + 1), True), (same.get(chunk.chunk_index - 1), False)):
+        for neighbour, after in order:
             if neighbour is None:
                 continue
             merged = _merge_overlap(text, neighbour.text) if after else _merge_overlap(neighbour.text, text)

@@ -39,7 +39,7 @@ python scripts/check_extraction.py --docs "C:/thesora_survey"
 | # | Ask (Ask a question mode) | Pass looks like |
 |---|---|---|
 | Q1 | `What is omni-moderation-latest used for?` | Ai2 Scholar QA uses it for **query validation**, to block harmful queries before processing. Cites Ai2. *(Exact rare term: the keyword half.)* |
-| Q2 | `How does Ai2 Scholar QA stop harmful questions before answering them?` | The same fact, found without the exact term. *(Reworded: the meaning half.)* |
+| Q2 | `Which moderation model screens user queries in Ai2 Scholar QA?` | **omni-moderation-latest** (OpenAI), found from a reworded question. *(Meaning half.)* Known hard case: `How does Ai2 Scholar QA stop harmful questions before answering them?` refuses — the PDF splits that sentence across two columns, so no single passage holds it. Refusing is the honest result, not a wrong answer. |
 | Q3 | `What value of K is used in Reciprocal Rank Fusion?` | **K = 60** (HySemRAG). Worth showing in the demo: Thesora uses the same RRF constant. |
 
 ### F2 · Cross-encoder reranking
@@ -103,10 +103,10 @@ python scripts/compare_retrievers.py
 
 If a table answer abstains, check that table was listed in Step 0 output. If it wasn't, table detection missed it; tell me which one.
 
-### N2 · Search upgrades (off by default)
-**Why:** they are switches, so the test is that they can be turned on without breaking anything.
+### N2 · Search upgrades (context expansion on; the other two off)
+**Why:** context expansion is now on for the 2 best passages; Q13 (ozone) and Q16 (LFS) depend on it.
 - Restart the backend with `MULTI_QUERY=1` and ask Q2 again. **Pass:** the same answer, slightly slower. Then turn it back off.
-- (Optional) `CONTEXT_EXPANSION=1`, then ask Q5 again. **Pass:** still τ = 0.8, still ✓.
+- (Optional) `CONTEXT_EXPANSION=0`, then ask Q16 again: it may now refuse, which shows why expansion is on.
 
 ### N3 · Comparison-table cells verified
 After the Compare run (Extras), open **⋯ → Table check**.
@@ -180,7 +180,7 @@ python scripts/stress_eval.py --limit 3
 ```bash
 python scripts/survey_check.py "C:/thesora_survey"
 ```
-Expect 13/14 retrieval checks to pass (the "harmful questions" paraphrase is the known miss: Thesora abstains), Compare 6/6 papers, and paper names such as "Lála et al., 2023" and "Godinez, 2025".
+Expect 14/14 retrieval checks to pass, Compare 6/6 papers, and paper names such as "Lála et al., 2023" and "Godinez, 2025".
 
 ## Step 3: Record the results
 

@@ -160,6 +160,25 @@ class ContextAndGlossaryTests(unittest.TestCase):
         self.assertEqual(merged.count("Given a question q"), 1)
         self.assertIn("0 to 5", merged)
 
+    def test_expansion_uses_neighbours_in_paper_order_not_page_index(self):
+        from types import SimpleNamespace
+
+        from app.core.models import DocumentChunk
+        from app.pipelines.rag import ResearchAssistant
+
+        def c(page, pos, text):
+            return DocumentChunk(chunk_id=f"P.pdf:p{page}:c{pos}", doc_id="P.pdf", page_number=page, section="S",
+                                 text=text, chunk_index=pos)
+
+        chunks = [c(1, 0, "Unrelated first page text."), c(1, 1, "We introduce the Logic Fidelity Score. Given a ques-"),
+                  c(2, 0, "tion q, the LLM assigns a score from 0 to 5."), c(2, 1, "Other text on page two.")]
+        a = ResearchAssistant.__new__(ResearchAssistant)
+        a.store = SimpleNamespace(_chunks=chunks)
+        expanded = a._context_text(chunks[1], 1)
+        self.assertIn("from 0 to 5", expanded)            # the next passage, on the next page
+        self.assertNotIn("Other text on page two", expanded)  # not another passage that shares chunk_index 1
+        self.assertIn("Given a ques", a._context_text(chunks[2], 1))  # mid-sentence start: previous first
+
     def test_expansion_is_on_by_default_for_top_passages(self):
         self.assertTrue(config.CONTEXT_EXPANSION)
         self.assertGreaterEqual(config.CONTEXT_EXPANSION_TOP, 1)
