@@ -48,7 +48,7 @@ DEFAULT_TIMEOUT_S = 900
 EVAL_TIMEOUT_S = 3600
 EVAL_LIMIT = 2
 FALLBACK_QUERY = "What is the main finding of the paper?"
-SYNTH_TOPIC = "deja vu"
+SYNTH_TOPIC = "reranking"
 EXIT_OK, EXIT_FAILURE = 0, 1
 
 
@@ -243,17 +243,18 @@ def api_checks(api: str, query: str, timeout: int, docs: Path) -> list[Result]:
                           f"ollama reachable={ollama.get('reachable')}, model={ollama.get('model')}, "
                           f"installed={ollama.get('model_installed')}, limits={health.get('limits')}"))
 
-    pdfs = sorted(docs.glob("*.pdf"))[: config.MAX_FILES_PER_REQUEST]
+    pdfs = sorted(docs.glob("*.pdf"))[: config.MAX_FILES_PER_REQUEST or None]
     if not pdfs:
         return results + [Result("API", "upload", FAIL, f"no PDFs in {docs}")]
     session = requests.post(f"{api}/sessions", timeout=10).json()["session_id"]
     base = f"{api}/sessions/{session}"
 
-    too_many = requests.post(f"{base}/ingest", files=_pdf_payload([pdfs[0]] * (config.MAX_FILES_PER_REQUEST + 1)),
-                             timeout=timeout)
-    results.append(Result("API", f"upload of {config.MAX_FILES_PER_REQUEST + 1} files rejected",
-                          PASS if too_many.status_code == 400 else FAIL,
-                          f"HTTP {too_many.status_code}: {too_many.json().get('detail', '')[:90]}"))
+    if config.MAX_FILES_PER_REQUEST:  # only when a per-upload file-count limit is configured
+        too_many = requests.post(f"{base}/ingest", files=_pdf_payload([pdfs[0]] * (config.MAX_FILES_PER_REQUEST + 1)),
+                                 timeout=timeout)
+        results.append(Result("API", f"upload of {config.MAX_FILES_PER_REQUEST + 1} files rejected",
+                              PASS if too_many.status_code == 400 else FAIL,
+                              f"HTTP {too_many.status_code}: {too_many.json().get('detail', '')[:90]}"))
 
     up = requests.post(f"{base}/ingest", files=_pdf_payload(pdfs), timeout=timeout)
     body = up.json()
@@ -311,7 +312,7 @@ def api_checks(api: str, query: str, timeout: int, docs: Path) -> list[Result]:
                               f"abstained={data.get('abstained')}, table={has_table}, gaps_section={has_gaps}, "
                               f"papers in sources={papers}"))
 
-    rough = "brain parts deja vu"
+    rough = "deepera reranking how good"
     ref = requests.post(f"{base}/refine", json={"text": rough, "mode": "ask"}, timeout=timeout)
     if ref.status_code == HTTP_UNAVAILABLE:
         results.append(Result("API", "POST /refine", SKIP, f"HTTP 503 clean error: {ref.json().get('detail')}"))

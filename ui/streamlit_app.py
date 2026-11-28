@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 # `streamlit run ui/streamlit_app.py` only puts ui/ on sys.path; add the project root so the
 # UI shares app/config.py (and its env overrides) with the backend instead of duplicating it.
@@ -24,6 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import config  # noqa: E402
+from ui.page_viewer import viewer_html  # noqa: E402
+from ui.text_format import is_table, readable_html, table_markdown  # noqa: E402
 from ui.styles import DARK, LIGHT, PANEL_CSS, build_css  # noqa: E402
 
 try:  # N9 PDF viewer component; falls back to a page image when missing
@@ -102,6 +105,8 @@ def new_chat(delete_old: bool = True) -> None:
     st.session_state.history = []
     st.session_state.ingest_results = []
     st.session_state.refine_result = None
+    st.session_state.pop("panel", None)
+    st.session_state.explain_cache = {}
     st.session_state.uploader_key = st.session_state.get("uploader_key", 0) + 1
 
 
@@ -136,14 +141,19 @@ def pill(kind: str, text: str) -> str:
     return f'<span class="th-pill {kind}"><span class="th-dot"></span>{esc(text)}</span>'
 
 
-def with_citation_badges(answer: str, unverified: set[int]) -> str:
-    """Escape the model's text and turn ``[n]`` markers into citation badges."""
+def with_citation_badges(answer: str, unverified: set[int], sources: Optional[list[dict[str, Any]]] = None) -> str:
+    """Escape the model's text and turn ``[n]`` markers into citation badges; hovering a badge shows
+    which paper and page passage n comes from."""
     safe = html.escape(answer, quote=False).replace("&gt;", ">")  # keep markdown quotes; no raw tags survive
+    labels = {int(src["index"]): src.get("label") or src["doc_id"] for src in sources or []}
 
     def badge(match: re.Match) -> str:
         number = int(match.group(1))
         extra = " unverified" if number in unverified else ""
-        return f'<span class="cite{extra}">{number}</span>'
+        title = f"[{number}] {labels[number]}" if number in labels else f"Passage {number}"
+        if number in unverified:
+            title += " · ! not matched word-for-word"
+        return f'<span class="cite{extra}" title="{html.escape(title)}">{number}</span>'
 
     return _CITE_RE.sub(badge, safe)
 
@@ -189,28 +199,25 @@ def render_result(result: dict[str, Any]) -> None:
     mode = result.get("mode", "ask")
     with card():
         title = "Comparison" if mode == "synthesize" else "Answer"
-        head, menu = st.columns([12, 1], vertical_alignment="center")
-        head.markdown(
+        st.markdown(
             f'<div class="th-answer-head"><span class="th-answer-label">{title}</span>'
             f'<span class="th-meta">{result.get("latency_s", 0)} s</span></div>',
             unsafe_allow_html=True,
         )
-        if not result["abstained"]:
-            with menu.popover("⋯", help="Checks and explain"):
-                render_answer_menu(result)
         if result["abstained"]:
             st.markdown(
                 notice("warn", "?", "Not answered from your papers", result.get("message") or config.ABSTAIN_MESSAGE),
                 unsafe_allow_html=True,
             )
+            render_closest(result)
         else:
-            st.markdown(with_citation_badges(result["answer"], unverified), unsafe_allow_html=True)
+            st.markdown(with_citation_badges(result["answer"], unverified, result.get("sources")), unsafe_allow_html=True)
             if unverified:
                 numbers = ", ".join(f"[{n}]" for n in sorted(unverified))
                 st.markdown(
                     notice("warn", "!", f"Check citation {numbers}",
                            "These claims could not be matched word-for-word to the cited passage. "
-                           "Open the source below before relying on them."),
+                           "Open it from Citations before relying on them."),
                     unsafe_allow_html=True,
                 )
             elif result.get("message"):
@@ -220,8 +227,7 @@ def render_result(result: dict[str, Any]) -> None:
             st.markdown(notice("bad", "×", f"Invalid citation {numbers}", "The model cited a passage that does not exist."),
                         unsafe_allow_html=True)
         render_trust_extras(result)
-        st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
-        render_sources(result, result.get("sources", []))
+        render_actions(result)
 
 
 def _key() -> str:
@@ -241,54 +247,116 @@ def _source_badge(source: dict[str, Any]) -> str:
 
 
 def _open_panel(**panel: Any) -> None:
-    st.session_state.panel = panel
+    """Open (or switch) the side panel. Citation and Explain each keep their own content: opening one
+    leaves the other as it was, so switching tabs never clears anything."""
+    current = dict(st.session_state.get("panel") or {})
+    part = {k: v for k, v in panel.items() if k != "tab"}
+    if panel.get("tab") == "citation":
+        current.update(tab="citation", citation=part)
+    else:
+        current.update(tab="explain", explain=part)
+    st.session_state.panel = current
     st.rerun()
 
 
-def render_sources(result: dict[str, Any], sources: list[dict[str, Any]]) -> None:
-    """One compact dropdown per source; inside: the passage, then 📄 Open page and 💡 Explain."""
-    if not sources:
-        return
-    st.markdown(f'<div class="th-sources-title">{sources_title(result, len(sources))}</div>', unsafe_allow_html=True)
-    for src in sources:
+def _top_source(result: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The passage the answer leans on most: the best cited source, else the most relevant one."""
+    sources = result.get("sources") or []
+    cited = [s for s in sources if s.get("cited")]
+    return max(cited or sources, key=lambda s: float(s.get("relevance", 0.0)), default=None)
+
+
+def _open_source(result: dict[str, Any], src: dict[str, Any]) -> None:
+    _open_panel(tab="citation", doc_id=src["doc_id"], page=src["page_number"],
+                passage=" ".join(src.get("evidence") or []) or src["text"], label=src.get("label") or src["doc_id"])
+
+
+def _explain_source(result: dict[str, Any], src: dict[str, Any]) -> None:
+    _open_panel(tab="explain", answer_id=result["answer_id"], text=" ".join(src["text"].split())[:1500])
+
+
+def render_citations(result: dict[str, Any]) -> None:
+    """Pop-up content: confidence, then one compact card per retrieved passage with Open and Explain."""
+    st.markdown(confidence_meter(float(result.get("confidence", 0.0))), unsafe_allow_html=True)
+    for src in result.get("sources") or []:
         rel = min(1.0, max(0.0, float(src.get("relevance", 0.0))))
-        label = f"[{src['index']}]  {src.get('label') or src['doc_id']}  ·  {_source_badge(src)}  ·  rel {rel:.2f}"
-        with st.expander(label):
-            text = " ".join(src["text"].split())
-            st.markdown(f'<div class="th-src-text" style="padding:0;border:0">'
-                        f'{esc(text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + "…")}</div>',
+        st.markdown(f'<div class="th-cite-head"><em><b>[{src["index"]}]</b> {esc(src.get("label") or src["doc_id"])}</em>'
+                    f'<span>{esc(_source_badge(src))} · rel {rel:.2f}</span></div>', unsafe_allow_html=True)
+        if is_table(src["text"]):
+            caption, _ = table_markdown(src["text"])
+            st.caption((caption or "Table") + " (open the page to see the table)")
+        else:
+            st.markdown(f'<div class="th-src-text th-src-read th-cite-text">'
+                        f'{readable_html(src["text"], config.UI_CITATION_PREVIEW_CHARS, src.get("evidence"))}</div>',
                         unsafe_allow_html=True)
-            if src.get("meaning"):
-                st.caption(f"Meaning check: {src['meaning']}")
-            open_col, explain_col, _ = st.columns([1, 1, 2])
-            if open_col.button("📄 Open page", key=_key(), help="Show this page with the passage highlighted"):
-                _open_panel(tab="citation", doc_id=src["doc_id"], page=src["page_number"], passage=src["text"],
-                            label=src.get("label") or src["doc_id"])
-            if result.get("answer_id") and explain_col.button("💡 Explain", key=_key(), help="Explain this passage"):
-                _open_panel(tab="explain", answer_id=result["answer_id"], text=text[:1500])
-
-
-def render_answer_menu(result: dict[str, Any]) -> None:
-    """The ⋯ menu: sentence check, table check and explain-the-answer, shown only when asked."""
+        open_col, explain_col = st.columns(2)
+        if open_col.button("📄 Open", key=_key(), use_container_width=True, help="Show the page, evidence highlighted"):
+            _open_source(result, src)
+        if result.get("answer_id") and explain_col.button("💡 Explain", key=_key(), use_container_width=True,
+                                                          help="Plain-English explanation of this passage"):
+            _explain_source(result, src)
     sentences = result.get("sentences") or []
     if sentences:
-        st.markdown("**Sentence check**")
+        st.markdown('<div class="th-sources-title">Sentence check</div>', unsafe_allow_html=True)
         for item in sentences:
-            st.markdown(f"{STATUS_ICON.get(item['status'], item['status'])} · {esc(item['text'])}")
+            st.caption(f"{STATUS_ICON.get(item['status'], item['status'])} · {item['text']}")
         if result.get("nli_available") is False:
             st.caption("Checked by wording only (meaning check is off).")
     cells = result.get("table_cells") or []
     if cells:
-        st.markdown("**Table check: is each cell in the paper?**")
+        st.markdown('<div class="th-sources-title">Table check: is each cell in the paper?</div>',
+                    unsafe_allow_html=True)
         for cell in cells:
             ev = ", ".join(f"[{e['passage']}] p.{e['page']}" for e in cell["evidence"])
-            st.markdown(f"{STATUS_ICON.get(cell['status'], cell['status'])} · {esc(cell['paper'])} · {esc(cell['column'])}"
-                        + (f" — {ev}" if ev else ""))
-    if result.get("answer_id") and st.button("💡 Explain this answer", key=_key(), use_container_width=True):
-        _open_panel(tab="explain", answer_id=result["answer_id"],
-                    text=re.sub(r"\[\d+\]", "", result.get("answer", ""))[:1500])
-    if not (sentences or cells or result.get("answer_id")):
-        st.caption("No extra checks for this answer.")
+            st.caption(f"{STATUS_ICON.get(cell['status'], cell['status'])} · {cell['paper']} · {cell['column']}"
+                       + (f" — {ev}" if ev else ""))
+
+
+def _suggest_key(result: dict[str, Any]) -> str:
+    return f"{result.get('answer_id') or ''}|{result.get('question', '')}"
+
+
+def render_actions(result: dict[str, Any]) -> None:
+    """One row: Citations (pop-up) · Open top source · Explain top source · Suggested questions."""
+    sources = result.get("sources") or []
+    top = _top_source(result)
+    cols = st.columns([1.25, 1, 1, 1.35])
+    label = ("Closest passages" if result["abstained"] else "Citations") + f" ({len(sources)})"
+    with cols[0].popover(f"📚 {label}", use_container_width=True, disabled=not sources):
+        render_citations(result)
+    if top is not None and cols[1].button("📄 Open top source", key=_key(), use_container_width=True,
+                                          help=f"[{top['index']}] {top.get('label') or top['doc_id']}"):
+        _open_source(result, top)
+    if top is not None and result.get("answer_id") and cols[2].button(
+            "💡 Explain", key=_key(), use_container_width=True,
+            help=f"Plain-English explanation of [{top['index']}], the top source"):
+        _explain_source(result, top)
+    key = _suggest_key(result)
+    shown = st.session_state.setdefault("suggest_shown", {})
+    if result.get("question") and cols[3].button("✨ Suggested questions", key=_key(), use_container_width=True,
+                                                 help="Three questions to ask next, from your papers"):
+        shown[key] = not shown.get(key, False)
+        cache = st.session_state.setdefault("suggest_cache", {})
+        if shown[key] and key not in cache:
+            data, err, _ = call_api("POST", session_path("/suggest"), label="Finding questions",
+                                    json={"question": result["question"], "answer_id": result.get("answer_id")})
+            cache[key] = {"error": err} if err else data
+    if shown.get(key):
+        render_suggestions(st.session_state.get("suggest_cache", {}).get(key) or {})
+
+
+def render_suggestions(data: dict[str, Any]) -> None:
+    if data.get("error"):
+        st.caption(f"Could not suggest questions: {data['error']}")
+        return
+    questions = data.get("questions") or []
+    if not questions:
+        st.caption("No suggestions: the papers have nothing close to this question.")
+    for question in questions:
+        if st.button(f"↳ {question}", key=_key(), use_container_width=True, help="Ask this now"):
+            st.session_state.pending_prompt = question
+            st.session_state.pending_mode = "ask"
+            st.rerun()
 
 
 def render_panel(panel: dict[str, Any]) -> None:
@@ -299,15 +367,15 @@ def render_panel(panel: dict[str, Any]) -> None:
     names = ["Citation", "Explain"] if panel.get("tab") == "citation" else ["Explain", "Citation"]
     tabs = dict(zip(names, st.tabs(names)))
     with tabs["Citation"]:
-        if panel.get("doc_id"):
-            render_citation(panel)
+        if panel.get("citation"):
+            render_citation(panel["citation"])
         else:
-            st.caption("Click a 📄 source button under an answer to open its page here.")
+            st.caption("Open a source and click 📄 Open page to see it here, highlighted.")
     with tabs["Explain"]:
-        if panel.get("answer_id"):
-            render_explain(panel)
+        if panel.get("explain"):
+            render_explain(panel["explain"])
         else:
-            st.caption("Click 💡 Explain under an answer to get a plain-English explanation here.")
+            st.caption("Click 💡 Explain under an answer or a source to get a plain-English explanation here.")
 
 
 def render_citation(panel: dict[str, Any]) -> None:
@@ -319,38 +387,140 @@ def render_citation(panel: dict[str, Any]) -> None:
         st.markdown(notice("bad", "×", "Could not open the page", err), unsafe_allow_html=True)
         return
     if not hl["found"]:
-        st.caption("The exact passage could not be located on this page, so it is shown without a highlight.")
+        st.caption("The passage could not be matched on this page (it may be a formula or code), so the page is "
+                   "shown without a highlight.")
     try:
+        if config.PDF_PANEL_MODE == "zoom":
+            png = requests.get(f"{base}/page/{panel['page']}.png", params={"zoom": config.PANEL_PAGE_ZOOM},
+                               timeout=REQUEST_TIMEOUT_S)
+            png.raise_for_status()
+            components.html(viewer_html(png.content, hl["page_width"], hl["page_height"], hl["annotations"],
+                                        config.PANEL_HEIGHT_PX, panel["label"]),
+                            height=config.PANEL_HEIGHT_PX + 44)
+            return
         if pdf_viewer is None or config.PDF_PANEL_MODE == "image":
             raise RuntimeError("image mode")
         pdf = requests.get(f"{base}/pdf", timeout=REQUEST_TIMEOUT_S).content
-        pdf_viewer(pdf, width=config.VIEWER_WIDTH_PX, zoom_level="auto", annotations=hl["annotations"], pages_to_render=[panel["page"]],
-                   key=f"pdf_{panel['doc_id']}_{panel['page']}")
+        pdf_viewer(pdf, width=config.VIEWER_WIDTH_PX, zoom_level="auto", annotations=hl["annotations"],
+                   pages_to_render=[panel["page"]], resolution_boost=3, key=f"pdf_{panel['doc_id']}_{panel['page']}")
     except Exception:
         png = requests.get(f"{base}/page/{panel['page']}.png", params={"passage": panel["passage"][:1500]},
                            timeout=REQUEST_TIMEOUT_S).content
         st.image(png, use_container_width=True)
 
 
-def render_explain(panel: dict[str, Any]) -> None:
-    text = st.text_area("Text to explain (edit to select just part of it)", value=panel.get("text", ""), height=140,
-                        key=f"exp_text_{panel['answer_id']}")
-    follow = st.text_input("Follow-up question (optional)", key=f"exp_follow_{panel['answer_id']}")
-    if st.button("💡 Explain", type="primary", key=_key()):
+def _explain_state(explain: dict[str, Any]) -> dict[str, Any]:
+    """Cached per answer and text, so switching tabs or reopening never asks the model again."""
+    cache = st.session_state.setdefault("explain_cache", {})
+    key = f"{explain['answer_id']}:{hash(explain.get('text', ''))}"
+    return cache.setdefault(key, {"result": None, "followups": [], "key": key})
+
+
+def _ask_followup(state: dict[str, Any], question: str) -> None:
+    data, err, _ = call_api("POST", session_path("/ask"), label="Answering", json={"question": question})
+    state["followups"].append({"question": question, "data": data, "error": err, "state_key": state.get("key")})
+
+
+def render_followup(item: dict[str, Any]) -> None:
+    st.markdown(f"**{esc(item['question'])}**")
+    data = item.get("data")
+    if item.get("error"):
+        st.markdown(notice("bad", "×", "Could not answer", item["error"]), unsafe_allow_html=True)
+    elif not data or data.get("abstained"):
+        st.caption("Not answered from your papers: they do not say.")
+        if data:
+            render_closest(data, compact=True)
+            render_try_instead(item)
+    else:
+        st.markdown(with_citation_badges(data["answer"], set(data.get("unverified_citations") or []), data.get("sources")),
+                    unsafe_allow_html=True)
+        cited = [src for src in data.get("sources", []) if src.get("cited")]
+        if cited:
+            st.caption(" · ".join(f"[{src['index']}] {src.get('label') or src['doc_id']}" for src in cited))
+
+
+def render_closest(result: dict[str, Any], compact: bool = False) -> None:
+    """After a refusal: the closest thing the papers say (quoted, not an answer), with Open. Shown only when
+    that passage is at least loosely related, so an off-topic question gets no misleading quote."""
+    top = _top_source(result)
+    if top is None or float(top.get("relevance", 0.0)) < config.UI_CLOSEST_MIN_RELEVANCE:
+        return
+    quote = " ".join((top.get("evidence") or [top["text"]])[0].split())
+    quote = quote if len(quote) <= config.UI_CLOSEST_CHARS else quote[: config.UI_CLOSEST_CHARS].rsplit(" ", 1)[0] + " …"
+    st.markdown(f'<div class="th-closest"><div class="th-closest-label">Closest thing your papers say '
+                f'(not an answer) · {esc(top.get("label") or top["doc_id"])}</div>“{esc(quote)}”</div>',
+                unsafe_allow_html=True)
+    if compact and st.button("📄 Open this page", key=_key()):
+        _open_source(result, top)
+
+
+def render_try_instead(item: dict[str, Any]) -> None:
+    """Replacement questions for a follow-up the papers could not answer (checked against the papers)."""
+    if "instead" not in item:
+        data, err, _ = call_api("POST", session_path("/suggest"), json={"question": item["question"]})
+        item["instead"] = [] if err else (data or {}).get("questions", [])[: config.UI_TRY_INSTEAD]
+    if item["instead"]:
+        st.caption("Try instead:")
+        for question in item["instead"]:
+            if st.button(f"↳ {question}", key=_key(), use_container_width=True):
+                st.session_state.pending_followup = (item.get("state_key"), question)
+                st.rerun()
+
+
+def render_explain(explain: dict[str, Any]) -> None:
+    """A short plain-English explanation, then three questions to ask next; a click answers it (with citations)."""
+    state = _explain_state(explain)
+    pending = st.session_state.pop("pending_followup", None)
+    if pending and pending[0] == state["key"]:
+        _ask_followup(state, pending[1])
+    if state["result"] is None:
         data, err, _ = call_api("POST", session_path("/explain"), label="Explaining",
-                                json={"answer_id": panel["answer_id"], "selected_text": text or "",
-                                      "follow_up": follow or None, "previous": panel.get("last")})
-        panel["result"] = {"error": err} if err else data
-        if data and not err:
-            panel["last"] = data["explanation"]
-    result = panel.get("result")
-    if result and result.get("error"):
+                                json={"answer_id": explain["answer_id"], "selected_text": explain.get("text") or "…"})
+        state["result"] = {"error": err} if err else data
+    result = state["result"]
+    if result.get("error"):
         st.markdown(notice("bad", "×", "Could not explain", result["error"]), unsafe_allow_html=True)
-    elif result:
-        for g in result.get("glossary", []):
-            st.markdown(f"**From the paper:** {esc(g['abbr'])} = {esc(g['long_form'])}, p.{g['page']}")
-        st.caption(result["label"])
-        st.markdown(result["explanation"])
+        if st.button("Try again", key=_key()):
+            state["result"] = None
+            st.rerun()
+        return
+    st.caption(result.get("label", "Plain-English explanation — not evidence"))
+    explanation = result.get("explanation") or ""
+    if explanation.lstrip().startswith("{"):  # never show raw model JSON
+        explanation = ""
+    st.markdown(esc(explanation or "The model gave no explanation this time; try one of the questions below or ask "
+                                   "your own."))
+    for g in result.get("glossary", []):
+        st.caption(f"From the paper: {g['abbr']} = {g['long_form']}, p.{g['page']}")
+    asked = {item["question"] for item in state["followups"]}
+    suggestions = [q for q in result.get("follow_ups") or [] if q not in asked]
+    if suggestions:
+        st.markdown('<div class="th-sources-title">Ask next</div>', unsafe_allow_html=True)
+        for question in suggestions:
+            if st.button(question, key=_key(), use_container_width=True):
+                _ask_followup(state, question)
+                st.rerun()
+    for item in state["followups"]:
+        with st.container(border=True):
+            render_followup(item)
+    own_key = f"own_{explain['answer_id']}"
+    if own_key + "_next" in st.session_state:  # set before the widget exists: a refined or cleared question
+        st.session_state[own_key] = st.session_state.pop(own_key + "_next")
+    own = st.text_input("Or ask your own follow-up", key=own_key)
+    ask_col, refine_col = st.columns(2)
+    if ask_col.button("Ask", key=_key(), use_container_width=True, disabled=not own.strip()):
+        _ask_followup(state, own.strip())
+        st.session_state[own_key + "_next"] = ""
+        st.rerun()
+    if refine_col.button("✨ Refine", key=_key(), use_container_width=True, disabled=not own.strip(),
+                         help="Rewrite a rough question into a precise one about your papers"):
+        data, err, _ = call_api("POST", session_path("/refine"), label="Refining",
+                                json={"text": own.strip(), "mode": "ask"})
+        if err:
+            st.caption(f"Could not refine: {err}")
+        else:
+            st.session_state[own_key + "_next"] = data.get("refined") or own
+            st.rerun()
 
 
 STATUS_ICON = {"verified": "✓ Verified", "weak": "~ Weak", "unverified": "! Unverified", "uncited": "○ Uncited",
@@ -421,7 +591,9 @@ def render_turn(turn: dict[str, Any]) -> None:
 
 
 def render_empty_state(has_documents: bool) -> None:
-    first = "Done — your papers are ready." if has_documents else "Drop up to 10 PDFs in the sidebar and press Ingest."
+    first = ("Done — your papers are ready." if has_documents else
+             f"Drop your PDFs in the sidebar ({config.MAX_UPLOAD_MB} MB each, {config.MAX_SESSION_PDF_MB} MB in total) "
+             "and press Ingest.")
     st.markdown(
         '<div class="th-steps">'
         f'<div class="th-step"><div class="th-step-n">01</div><div class="th-step-t">Add papers</div>'
@@ -505,7 +677,7 @@ def sidebar() -> list[dict[str, Any]]:
 
         st.markdown('<div class="th-eyebrow">Library</div>', unsafe_allow_html=True)
         files = st.file_uploader(
-            f"Add PDFs · up to {MAX_FILES_PER_REQUEST} per upload",
+            f"Add PDFs · {config.MAX_UPLOAD_MB} MB each · {config.MAX_SESSION_PDF_MB} MB per chat",
             type=["pdf"],
             accept_multiple_files=True,
             key=f"uploader_{st.session_state.uploader_key}",
@@ -514,11 +686,14 @@ def sidebar() -> list[dict[str, Any]]:
             if f.size > config.LARGE_FILE_WARN_MB * 1024 * 1024:
                 st.markdown(notice("warn", "!", f"{f.name}: large file ({f.size / 1048576:.0f} MB)",
                                    "It may use more memory and take longer to read."), unsafe_allow_html=True)
-        too_many = bool(files) and len(files) > MAX_FILES_PER_REQUEST
+        total_mb = sum(f.size for f in files or []) / 1048576
+        too_many = bool(files) and (bool(MAX_FILES_PER_REQUEST) and len(files) > MAX_FILES_PER_REQUEST
+                                    or total_mb > config.MAX_SESSION_PDF_MB)
         if too_many:
             st.markdown(
-                notice("bad", "×", f"{len(files)} files selected",
-                       f"Remove some: at most {MAX_FILES_PER_REQUEST} PDFs per upload."),
+                notice("bad", "×", f"{len(files)} files selected · {total_mb:.0f} MB",
+                       f"Remove some: at most {config.MAX_SESSION_PDF_MB} MB of PDFs per chat"
+                       + (f" and {MAX_FILES_PER_REQUEST} per upload." if MAX_FILES_PER_REQUEST else ".")),
                 unsafe_allow_html=True,
             )
         if st.button("Ingest papers", type="primary", use_container_width=True, disabled=not files or too_many):
@@ -543,22 +718,25 @@ def sidebar() -> list[dict[str, Any]]:
                 for d in documents
             )
             total = sum(d["chunks"] for d in documents)
-            st.markdown(
-                cards + f'<div class="th-stat">{len(documents)} paper{"s" if len(documents) != 1 else ""} · '
-                f"{total} passages</div>",
-                unsafe_allow_html=True,
-            )
+            with st.container(height=config.UI_SIDEBAR_DOCS_HEIGHT if len(documents) > 3 else None, border=False):
+                st.markdown(cards, unsafe_allow_html=True)  # three visible, scroll for the rest
+            st.markdown(f'<div class="th-stat">{len(documents)} paper{"s" if len(documents) != 1 else ""} · '
+                        f"{total} passages</div>", unsafe_allow_html=True)
         else:
             st.markdown('<div class="th-empty">No papers yet. Every new chat starts empty.</div>',
                         unsafe_allow_html=True)
         if documents:
             gl, _, _ = call_api("GET", session_path("/glossary"), timeout=HEALTH_TIMEOUT_S)
             terms = (gl or {}).get("glossary", [])
-            with st.expander(f"Glossary ({len(terms)})"):
+            terms = sorted(terms, key=lambda g: -int(g.get("count") or 0))  # most used first
+            with st.expander(f"Glossary ({len(terms)}) · most used first"), \
+                    st.container(height=config.UI_GLOSSARY_HEIGHT if len(terms) > 5 else None, border=False):
                 for g in terms:
                     papers = g.get("papers") or [g["doc_id"]]
-                    where = (f"{Path(papers[0]).stem} p.{g['page']}" if len(papers) == 1
-                             else f"in {len(papers)} papers (first: {Path(papers[0]).stem} p.{g['page']})")
+                    first = Path(papers[0]).stem
+                    first = first if len(first) <= 28 else first[:26] + "…"
+                    where = (f"{first} p.{g['page']}" if len(papers) == 1
+                             else f"in {len(papers)} papers (first: {first} p.{g['page']})")
                     st.markdown(f"**{esc(g['abbr'])}** — {esc(g['long_form'])} · {esc(where)}")
                 if not terms:
                     st.caption("No abbreviations defined in these papers.")
@@ -571,7 +749,7 @@ def sidebar() -> list[dict[str, Any]]:
             except requests.exceptions.RequestException:
                 st.caption("Exports are unavailable while the backend is unreachable.")
         st.markdown(
-            f'<div class="th-footer">Max {MAX_FILES_PER_REQUEST} PDFs per upload · {config.MAX_UPLOAD_MB} MB each.<br>'
+            f'<div class="th-footer">Up to {config.MAX_UPLOAD_MB} MB per PDF · {config.MAX_SESSION_PDF_MB} MB per chat · any number of files.<br>'
             "Papers live only in this chat's memory; nothing is saved to disk.</div>",
             unsafe_allow_html=True,
         )
@@ -593,7 +771,7 @@ def refiner_panel(mode: str) -> None:
         )
         target = "topic to compare" if mode == "compare" else "question"
         st.text_area(f"Your rough {target}", key="refine_text", height=80, label_visibility="collapsed",
-                     placeholder=f"e.g. {'methods and results' if mode == 'compare' else 'brain parts deja vu'}")
+                     placeholder=f"e.g. {'methods and results' if mode == 'compare' else 'deepera reranking how good'}")
         # Always enabled: Streamlit commits typed text only when the box loses focus, so a disabled
         # button would swallow the first click.
         if st.button("✨ Refine", type="primary"):
@@ -706,6 +884,8 @@ def main() -> None:
                    "agree": "One topic to check, e.g. citation hallucination"}[mode]
     prompt = st.chat_input(placeholder, disabled=not st.session_state.session_id)
     pending = st.session_state.pop("pending_prompt", None) or prompt
+    if st.session_state.pop("pending_mode", None) == "ask":
+        mode = "ask"  # a suggested question is a question, whatever mode the bar shows
 
     st.session_state._btn = 0
     panel = st.session_state.get("panel")

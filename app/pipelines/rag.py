@@ -84,10 +84,10 @@ from app.ingestion.layout import table_chunks  # noqa: E402  (v2 N1)
 
 from app.generation.viewer import (  # noqa: E402  (v2 N9 / N11)
     EXPLAIN_SYSTEM_PROMPT, build_explain_prompt, build_glossary, expand_query, glossary_hits, merge_glossary,
-    spell_out,
+    SUGGEST_SYSTEM_PROMPT, build_suggest_prompt, parse_explanation, parse_questions, spell_out,
 )
 from app.generation.trust import (  # noqa: E402  (v2 batch A)
-    REPAIR_SYSTEM_PROMPT, NLIChecker, drop_unsupported, extract_metadata, paper_names, sentence_report, short_label,
+    REPAIR_SYSTEM_PROMPT, NLIChecker, closest_sentence, drop_unsupported, evidence_sentences, extract_metadata, paper_names, sentence_report, short_label,
     silent_papers, verify_table,
 )
 
@@ -114,12 +114,15 @@ def _offsets(results) -> list[int]:
 
 
 def _merge_overlap(first: str, second: str) -> str:
-    """Join two consecutive chunks, dropping the text they share (chunks overlap by CHUNK_OVERLAP)."""
+    """Join two consecutive chunks, dropping the text they share (chunks overlap by CHUNK_OVERLAP).
+    Whitespace is normalised first: the overlap can be split over different line breaks in the two chunks."""
+    first, second = " ".join(first.split()), " ".join(second.split())
     limit = min(len(first), len(second), config.CHUNK_OVERLAP + 50)
-    for size in range(limit, 15, -1):
-        if first.endswith(second[:size]):
+    for size in range(limit, 7, -1):
+        if first.endswith(second[:size]) and (size == len(second) or not second[size].isalnum()):
             return first + second[size:]
     return first + " " + second
+
 
 class ResearchAssistant:
     """High-level API used by the FastAPI app, CLI scripts and the evaluator.
@@ -145,6 +148,8 @@ class ResearchAssistant:
         self.glossary: list[dict[str, Any]] = []  # N11
         self.paper_names: dict[str, dict[str, int]] = {}  # name -> strength, per paper (question scoping)
         self.answer_passages: dict[str, list[str]] = {}  # N11: passages behind each answer, by answer_id
+        self.answer_questions: dict[str, str] = {}  # N11: the question behind each answer, by answer_id
+        self.suggestions: dict[str, list[str]] = {}  # suggested next questions, cached per answer
         self.embedder = embedder or Embedder()
         self.store = store if store is not None else VectorStore()
         self.retriever = retriever or HybridRetriever(self.store, self.embedder, reranker)
@@ -226,12 +231,16 @@ class ResearchAssistant:
     def _abstain(
         self, question: str, message: str, chunks: Sequence[RetrievedChunk], confidence: float, started: float, mode: str
     ) -> Answer:
+        sources = self._sources(chunks, set())
+        for source, item in zip(sources, chunks):  # the sentence closest to the question (quoted, never an answer)
+            source.evidence = closest_sentence(question, item.chunk.text, item.chunk.section,
+                                               self._subject(item.chunk.doc_id))
         answer = Answer(
             question=question,
             answer="",
             abstained=True,
             confidence=round(confidence, 3),
-            sources=self._sources(chunks, set()),
+            sources=sources,
             message=message,
             latency_s=round(time.perf_counter() - started, 3),
             mode=mode,
@@ -371,23 +380,70 @@ class ResearchAssistant:
         i = max(range(len(pairs)), key=lambda k: logits[k])
         return pairs[i][0], pairs[i][1], sigmoid(logits[i])
 
-    def _remember(self, passages: list[str]) -> str:
+    def _remember(self, passages: list[str], question: str = "") -> str:
         answer_id = uuid.uuid4().hex
         self.answer_passages[answer_id] = passages[: config.FINAL_TOP_K * 2]
+        self.answer_questions[answer_id] = question
         return answer_id
 
     def explain(self, answer_id: str, selected: str, follow_up: Optional[str] = None,
                 previous: Optional[str] = None) -> dict[str, Any]:
-        """N11: plain-English explanation of selected text, using only that answer's passages. Not evidence."""
+        """N11: a short plain-English explanation of selected text (an answer or a passage) from that answer's
+        passages only, plus three follow-up questions the user can click. Not evidence: follow-up questions
+        are answered by the normal cited /ask pipeline."""
         passages = self.answer_passages.get(answer_id)
         if passages is None:
             raise ValueError("That answer is no longer available in this chat. Ask the question again.")
         if not selected.strip():
             raise ValueError("Select or paste some text to explain.")
         hits = [dict(g) for g in glossary_hits(selected, self.glossary)]
-        text = self.llm.generate(EXPLAIN_SYSTEM_PROMPT, build_explain_prompt(selected, passages, follow_up, previous),
-                                 config.EXPLAIN_MAX_TOKENS)
-        return {"explanation": text, "glossary": hits, "label": "Plain-English explanation — not evidence"}
+        raw = self.llm.generate(EXPLAIN_SYSTEM_PROMPT,
+                                build_explain_prompt(selected, passages, follow_up, previous,
+                                                     self.answer_questions.get(answer_id, "")),
+                                config.EXPLAIN_MAX_TOKENS)
+        explanation, follow_ups = parse_explanation(raw, config.EXPLAIN_FOLLOW_UP_CANDIDATES)
+        follow_ups = self.answerable(follow_ups, config.SUGGEST_COUNT)
+        return {"explanation": explanation, "follow_ups": follow_ups, "glossary": hits,
+                "label": "Plain-English explanation — not evidence"}
+
+    def suggest(self, question: str, answer_id: Optional[str] = None) -> dict[str, Any]:
+        """Three questions to ask next, from this chat's papers: the passages behind the answer (or, after a
+        refusal, the passages closest to the question), the paper titles and the questions already asked."""
+        question = question.strip()
+        if not question:
+            raise ValueError("Question must not be empty.")
+        if len(self.store) == 0:
+            return {"questions": []}
+        cache_key = f"{answer_id or ''}|{question}"
+        if cache_key in self.suggestions:
+            return {"questions": self.suggestions[cache_key]}
+        passages = self.answer_passages.get(answer_id or "") or [c.chunk.text for c in self.retrieve_for(question)]
+        if not passages:  # nothing close: suggest from the strongest passages of each paper instead
+            passages = [c.chunk.text for c in self.retriever.retrieve_across_documents(question)[: config.FINAL_TOP_K]]
+        titles = [(self.metadata.get(d["doc_id"]) or {}).get("title") or d["doc_id"]
+                  for d in getattr(self.store, "documents", list)()]
+        asked = [turn.get("question", "") for turn in self.history[-config.SUGGEST_HISTORY:] if turn.get("question")]
+        raw = self.llm.generate(SUGGEST_SYSTEM_PROMPT, build_suggest_prompt(question, passages, titles, asked),
+                                config.SUGGEST_MAX_TOKENS)
+        candidates = [q for q in parse_questions(raw, config.SUGGEST_CANDIDATES) if q.lower() != question.lower()]
+        questions = self.answerable(candidates, config.SUGGEST_COUNT)
+        self.suggestions[cache_key] = questions
+        return {"questions": questions}
+
+    def answerable(self, questions: Sequence[str], limit: int) -> list[str]:
+        """Keep only questions the papers can answer: each is run through retrieval (no model call) and kept
+        when its best passage clears the same relevance bar a real answer needs. Best-supported first."""
+        scored = []
+        for position, question in enumerate(questions):
+            try:
+                chunks = self.retrieve_for(question)
+            except Exception as exc:  # a failed check drops the suggestion, never the whole list
+                logger.info("Suggestion check failed for %r: %s", question, exc)
+                continue
+            best = chunks[0].relevance if chunks else 0.0
+            if best >= config.SUGGEST_MIN_RELEVANCE:
+                scored.append((-best, position, question))
+        return [q for _, _, q in sorted(scored)[:limit]]
 
     def _nli(self) -> Optional[NLIChecker]:
         return self.nli if self.nli.available else None
@@ -422,7 +478,8 @@ class ResearchAssistant:
             mode="ask", sentences=sentences,
             silent_papers=sorted(set.intersection(*(set(r.silent_papers) for r in answered))) if answered else [],
             parts=[{"question": p, "answered": not r.abstained, "abstained": r.abstained} for p, r in zip(parts, results)],
-            answer_id=self._remember([t for r in answered for t in self.answer_passages.get(r.answer_id or "", [])]),
+            answer_id=self._remember([t for r in answered for t in self.answer_passages.get(r.answer_id or "", [])],
+                                     question.strip()),
         )
         self.history.append(result.to_dict())
         return result
@@ -470,7 +527,9 @@ class ResearchAssistant:
                 return self._abstain(question, config.ABSTAIN_MESSAGE, chunks, 0.0, started, "ask")
             verification = verify_citations(raw, texts, subjects)
         sources = self._sources(chunks, set(verification.cited))
+        evidence = evidence_sentences(raw, texts, subjects, {n: item.chunk.section for n, item in enumerate(chunks, start=1)})
         for source in sources:
+            source.evidence = evidence.get(source.index, [])
             check = verification.per_source.get(source.index)
             source.verified = bool(check and check.verified)
             source.match_score = check.match_score if check else None
@@ -500,7 +559,7 @@ class ResearchAssistant:
             silent_papers=silent_papers([d["doc_id"] for d in getattr(self.store, "documents", list)()], best_by_doc),
             repair=repair,
             nli_available=nli is not None,
-            answer_id=self._remember([c.chunk.text for c in chunks]),
+            answer_id=self._remember([c.chunk.text for c in chunks], question),
         )
         self.history.append(result.to_dict())
         return result

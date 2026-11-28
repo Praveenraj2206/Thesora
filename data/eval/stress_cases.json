@@ -1,9 +1,15 @@
 {
-  "note": "Adversarial cases built from golden_qa.json and data/papers (N13). Each case reuses a golden question; the script builds the passages.",
-  "groups": {
-    "noisy": "the true evidence passage plus irrelevant passages from other papers",
-    "ssli": "the true passage plus look-alike passages (high word overlap, different paper or topic)",
-    "counterfactual": "the true passage with its numbers altered; a faithful system must not repeat the true value as if unchanged, and must cite the altered passage or abstain"
-  },
-  "questions": [0, 1, 2, 3, 4]
+ "note": "Adversarial cases built from golden_qa.json and data/papers (N13). Each case reuses a golden question; the script builds the passages.",
+ "groups": {
+  "noisy": "the true evidence passage plus irrelevant passages from other papers",
+  "ssli": "the true passage plus look-alike passages (high word overlap, different paper or topic)",
+  "counterfactual": "the true passage with its numbers altered; a faithful system must not repeat the true value as if unchanged, and must cite the altered passage or abstain"
+ },
+ "questions": [
+  0,
+  1,
+  2,
+  4,
+  6
+ ]
 }

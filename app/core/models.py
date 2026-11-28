@@ -74,6 +74,7 @@ class Source:
     match_score: Optional[float] = None
     meaning: Optional[str] = None  # N8: entailed / weak / contradicted (None when NLI did not run)
     label: Optional[str] = None  # N4: "Smith et al., 2023 · p.4 · Results"
+    evidence: list[str] = field(default_factory=list)  # the sentences that support the answer (highlighted)
 
 
 @dataclass

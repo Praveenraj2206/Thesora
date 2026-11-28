@@ -15,15 +15,15 @@ sys.path.insert(0, str(ROOT / "tests"))
 from app.generation import viewer  # noqa: E402
 from app.ingestion.pdf_loader import load_pdf  # noqa: E402
 
-PAPER = ROOT / "data" / "papers" / "DejaVu2.pdf"
+PAPER = ROOT / "data" / "papers" / "PaperQA.pdf"
 
 
 class ViewerTests(unittest.TestCase):
     def test_highlight_finds_passage_in_pdf_points(self):
-        pages = load_pdf(PAPER, "DejaVu2.pdf")
-        text = next(p.text for p in pages if p.page_number == 11)
-        i = text.find("89%")
-        result = viewer.highlight(PAPER.read_bytes(), 11, text[max(0, i - 120):i + 80])
+        pages = load_pdf(PAPER, "PaperQA.pdf")
+        page = next(p for p in pages if "4,000" in p.text)
+        i = page.text.find("4,000")
+        result = viewer.highlight(PAPER.read_bytes(), page.page_number, page.text[max(0, i - 120):i + 80])
         self.assertTrue(result["found"])
         box = result["annotations"][0]
         self.assertTrue(0 <= box["x"] < result["page_width"] and 0 <= box["y"] < result["page_height"])
@@ -37,18 +37,38 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(viewer.page_png(PAPER.read_bytes(), 1).startswith(b"\x89PNG"))
 
     def test_glossary_and_query_expansion(self):
-        pages = load_pdf(ROOT / "data" / "papers" / "DejaVu1.pdf", "DejaVu1.pdf")
-        glossary = viewer.build_glossary(pages, "DejaVu1.pdf")
-        self.assertIn("LSD", [g["abbr"] for g in glossary])
-        self.assertIn("lysergic acid", viewer.expand_query("What does LSD do?", glossary))
-        self.assertIsNone(viewer.expand_query("What is deja vu?", glossary))
+        pages = load_pdf(ROOT / "data" / "papers" / "DeepEra.pdf", "DeepEra.pdf")
+        glossary = viewer.build_glossary(pages, "DeepEra.pdf")
+        self.assertIn("LFS", [g["abbr"] for g in glossary])
+        self.assertIn("Logic Fidelity Score", viewer.expand_query("How is LFS computed?", glossary))
+        self.assertIsNone(viewer.expand_query("What is a reranker?", glossary))
 
     def test_explain_prompt_rules(self):
-        self.assertIn("Illustrative example — not from the papers", viewer.EXPLAIN_SYSTEM_PROMPT)
         self.assertIn("ONLY the given passages", viewer.EXPLAIN_SYSTEM_PROMPT)
-        prompt = viewer.build_explain_prompt("RRF merges lists", ["p1", "p2"], "why?", "before")
+        self.assertIn("five short follow-up questions", viewer.EXPLAIN_SYSTEM_PROMPT)
+        self.assertNotIn("What, Why, How", viewer.EXPLAIN_SYSTEM_PROMPT)
+        prompt = viewer.build_explain_prompt("RRF merges lists", ["p1", "p2"], "why?", "before", "What is RRF?")
         self.assertIn("[2] p2", prompt)
-        self.assertIn("Question: why?", prompt)
+        self.assertIn("Original question: What is RRF?", prompt)
+        self.assertIn("Student's question: why?", prompt)
+
+    def test_parse_explanation_json_and_fallback(self):
+        text, qs = viewer.parse_explanation('{"explanation": "RRF merges  lists.", "follow_ups": ["Why k = 60?", '
+                                            '"What is BM25", "Why k = 60?"]}')
+        self.assertEqual(text, "RRF merges lists.")
+        self.assertEqual(qs, ["Why k = 60?", "What is BM25?"])
+        text, qs = viewer.parse_explanation("RRF merges ranked lists.\nFollow-up questions:\n1. Why 60?\n2. What is BM25?")
+        self.assertEqual(text, "RRF merges ranked lists.")
+        self.assertEqual(qs, ["Why 60?", "What is BM25?"])
+        broken = ('{"explanation": "Omni checks each query.", "follow_ups": ["What does it detect?", '
+                  '"Is it used only at the start?"}')  # the model forgot the closing bracket
+        self.assertEqual(viewer.parse_explanation(broken, 5),
+                         ("Omni checks each query.", ["What does it detect?", "Is it used only at the start?"]))
+        self.assertEqual(viewer.parse_questions('{"questions": ["One?", "Two?"'), ["One?", "Two?"])
+        text, qs = viewer.parse_explanation('{"questions": ["A?", "B?"]}')  # wrong key: no raw JSON shown
+        self.assertEqual((text, qs), ("", ["A?", "B?"]))
+        self.assertEqual(viewer.parse_questions('{"questions": ["One", "Two?"]}'), ["One?", "Two?"])
+        self.assertEqual(viewer.parse_questions("1. First?\n2. Second?\nnot a question"), ["First?", "Second?"])
 
 
 class PanelApiTests(unittest.TestCase):
@@ -63,17 +83,17 @@ class PanelApiTests(unittest.TestCase):
             client = TestClient(main.app)
             sid = client.post("/sessions").json()["session_id"]
             client.post(f"/sessions/{sid}/ingest", files=[("files", (p.name, p.read_bytes(), "application/pdf")) for p in PAPERS])
-            pdf = client.get(f"/sessions/{sid}/documents/DejaVu2.pdf/pdf")
+            pdf = client.get(f"/sessions/{sid}/documents/PaperQA.pdf/pdf")
             self.assertEqual(pdf.content[:4], b"%PDF")
-            self.assertEqual(client.post(f"/sessions/{sid}/highlight", json={"doc_id": "DejaVu2.pdf", "page": 1,
+            self.assertEqual(client.post(f"/sessions/{sid}/highlight", json={"doc_id": "PaperQA.pdf", "page": 1,
                                                                              "passage": "zzzz nothing"}).status_code, 200)
-            self.assertIn("LSD", [g["abbr"] for g in client.get(f"/sessions/{sid}/glossary").json()["glossary"]])
-            answer = client.post(f"/sessions/{sid}/ask", json={"question": "What is deja vu?"}).json()
+            self.assertIn("LFS", [g["abbr"] for g in client.get(f"/sessions/{sid}/glossary").json()["glossary"]])
+            answer = client.post(f"/sessions/{sid}/ask", json={"question": "What is LitQA?"}).json()
             if answer["answer_id"]:
                 body = client.post(f"/sessions/{sid}/explain", json={"answer_id": answer["answer_id"],
-                                                                    "selected_text": "LSD and deja vu"}).json()
+                                                                    "selected_text": "LFS and reranking"}).json()
                 self.assertEqual(body["label"], "Plain-English explanation — not evidence")
-                self.assertEqual(body["glossary"][0]["abbr"], "LSD")
+                self.assertEqual(body["glossary"][0]["abbr"], "LFS")
             self.assertEqual(client.post(f"/sessions/{sid}/explain", json={"answer_id": "nope",
                                                                          "selected_text": "abc def"}).status_code, 400)
         finally:

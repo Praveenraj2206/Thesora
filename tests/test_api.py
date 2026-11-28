@@ -26,7 +26,9 @@ sys.path.insert(0, str(ROOT))
 from app import config  # noqa: E402
 from app.generation.llm import BaseLLM  # noqa: E402
 
-PAPERS = sorted((ROOT / "data" / "papers").glob("*.pdf"))
+_ALL_PAPERS = sorted((ROOT / "data" / "papers").glob("*.pdf"))
+# Two papers keep the API tests quick (PaperQA: single column; DeepEra: two columns, defines LFS).
+PAPERS = [p for p in _ALL_PAPERS if p.name in ("DeepEra.pdf", "PaperQA.pdf")] or _ALL_PAPERS[:2]
 _DEPS = all(importlib.util.find_spec(m) for m in ("fitz", "faiss", "langchain_text_splitters", "rank_bm25", "httpx"))
 _WORD_RE = re.compile(r"\w+")
 
@@ -71,6 +73,8 @@ class EchoLLM(BaseLLM):
         self.calls += 1
         if "prompt engineer" in system_prompt:  # the optional question refiner
             return '{"refined": "Which brain regions are involved in deja vu?", "why": "Named the target."}'
+        if "researcher could ask next" in system_prompt:  # suggested next questions
+            return '{"questions": ["What is LitQA?", "How is LFS computed?", "What is LitQA?", "Which reranker?"]}'
         body = user_prompt.split("\n", 2)[2]  # skip "Context passages:" + first header line
         first = body.split("\n", 1)[1].split("\n\n[2]")[0]
         return " ".join(first.split()[:20]) + " [1]."
@@ -103,19 +107,38 @@ class SessionApiTests(unittest.TestCase):
         files = [("files", (p.name, p.read_bytes(), "application/pdf")) for p in paths]
         return self.client.post(f"/sessions/{session}/ingest", files=files)
 
-    def test_more_than_ten_files_per_request_is_rejected(self):
+    def test_any_number_of_files_per_upload(self):
         session = self.new_session()
-        response = self.upload(session, [PAPERS[0]] * 11)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("at most 10", response.json()["detail"])
-        self.assertEqual(self.client.get(f"/sessions/{session}/documents").json()["documents"], [])
-
-    def test_exactly_ten_files_per_request_is_accepted(self):
-        session = self.new_session()
-        response = self.upload(session, [PAPERS[0]] * 10)
+        response = self.upload(session, [PAPERS[0]] * 12)
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual((body["ingested"], body["skipped"], body["failed"]), (1, 9, 0))
+        self.assertEqual((body["ingested"], body["skipped"], body["failed"]), (1, 11, 0))
+
+    def test_file_count_limit_still_works_when_set(self):
+        from unittest import mock
+
+        from app import config
+
+        with mock.patch.object(config, "MAX_FILES_PER_REQUEST", 2):
+            session = self.new_session()
+            response = self.upload(session, [PAPERS[0]] * 3)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at most 2", response.json()["detail"])
+
+    def test_file_over_15_mb_and_chat_over_200_mb_are_rejected(self):
+        from unittest import mock
+
+        from app import config
+
+        self.assertEqual((config.MAX_UPLOAD_MB, config.MAX_SESSION_PDF_MB), (15, 200))
+        session = self.new_session()
+        big = PAPERS[0].read_bytes() + b"%" + b"0" * (15 * 1024 * 1024)
+        response = self.client.post(f"/sessions/{session}/ingest",
+                                    files=[("files", ("big.pdf", big, "application/pdf"))])
+        self.assertIn("15 MB", response.json()["results"][0]["error"])
+        with mock.patch.object(config, "MAX_SESSION_PDF_MB", 0):
+            response = self.upload(self.new_session(), PAPERS[:1])
+        self.assertIn("MB of PDFs", response.json()["results"][0]["error"])
 
     def test_new_chat_does_not_see_old_pdfs_or_references(self):
         old = self.new_session()
@@ -165,6 +188,23 @@ class SessionApiTests(unittest.TestCase):
         broken = self.client.post(f"/sessions/{session}/ask", content=b"{oops",
                                   headers={"content-type": "application/json"})
         self.assertIn("not valid JSON", broken.json()["detail"])
+
+    def test_suggest_returns_three_new_questions_from_the_papers(self):
+        from unittest import mock
+
+        from app import config
+
+        patcher = mock.patch.object(config, "SUGGEST_MIN_RELEVANCE", 0.0)  # the stub embedder scores low; the
+        patcher.start()                                                    # answerability filter has its own test
+        self.addCleanup(patcher.stop)
+        session = self.new_session()
+        self.upload(session, PAPERS[:1])
+        body = self.client.post(f"/sessions/{session}/suggest", json={"question": "What is PaperQA?"}).json()
+        self.assertEqual(sorted(body["questions"]), ["How is LFS computed?", "What is LitQA?", "Which reranker?"])
+        calls = self.llm.calls
+        again = self.client.post(f"/sessions/{session}/suggest", json={"question": "What is PaperQA?"}).json()
+        self.assertEqual(again, body)
+        self.assertEqual(self.llm.calls, calls)  # cached: no second model call
 
     def test_refine_suggests_a_sharper_question(self):
         session = self.new_session()

@@ -18,7 +18,7 @@ A basic Retrieval-Augmented Generation (RAG) system finds a few similar-looking 
 
 <br>
 
-Searches by keywords (BM25, top 20) **and** by meaning (all-MiniLM-L6-v2 embeddings in FAISS, top 20), then merges both lists with Reciprocal Rank Fusion (k = 60) into 8 candidates. Exact terms such as "5-4-3-2-1" and reworded questions both work. Code: `app/retrieval/retriever.py`.
+Searches by keywords (BM25, top 20) **and** by meaning (all-MiniLM-L6-v2 embeddings in FAISS, top 20), then merges both lists with Reciprocal Rank Fusion (k = 60) into 8 candidates. Exact terms such as "omni-moderation-latest" and reworded questions both work. Code: `app/retrieval/retriever.py`.
 
 </details>
 
@@ -72,7 +72,7 @@ If no passage is relevant enough (best relevance below 0.35) Thesora refuses **w
 
 <br>
 
-Every chat starts empty and only sees its own PDFs (in memory, never saved to disk); at most 10 PDFs per upload. Code: `app/pipelines/sessions.py`, `app/api/main.py`.
+Every chat starts empty and only sees its own PDFs (in memory, never saved to disk); any number of PDFs, up to 15 MB each and 200 MB per chat. Code: `app/pipelines/sessions.py`, `app/api/main.py`.
 
 </details>
 
@@ -90,11 +90,15 @@ Optional **✨ Prompt refiner**: rewrites a rough question into a precise one th
 
 <br>
 
-A calm "paper" light theme with a one-click dark theme, citation badges, source dropdowns and a confidence meter. Code: `ui/streamlit_app.py`, `ui/styles.py`.
+A calm "paper" light theme with a one-click dark theme, citation badges, a compact citations pop-up and a confidence meter. Code: `ui/streamlit_app.py`, `ui/styles.py`.
 
 </details>
 
 **Questions that name a paper** ("Which embedding model does PaperQA use?") are searched inside that paper only, with a wider pool, and every passage keeps its best reranker score with and without the paper's name: inside one paper the name no longer tells passages apart, it only favours passages that repeat it. Paper names come from the title (the part before ":"), the first author and system names the paper repeats ("OpenScholar", "LitQA"). Paper-specific abbreviations are spelled out for the reranker too ("LFS (Logic Fidelity Score)"). For questions asking for numbers, the best clearly relevant table keeps the last of the 5 slots. Measured on the six survey papers with `scripts/survey_check.py`: 14 of 14 test questions get the answer passage (a harder paraphrase whose answer the PDF splits across two columns still abstains), both out-of-scope questions abstain, Compare covers 6 of 6 papers.
+
+**Clean extraction** (`app/ingestion/clean_layout.py`): only a paper's content is indexed. Running headers and footers, page numbers, the sideways arXiv stamp, the page-1 author / affiliation / date block, e-mail and URL footnotes, tiny figure labels, superscript citation markers and the reference list are dropped; table cells are left to their own table passage; boxed prompts and examples are kept. Two-column pages are read column by column (whole left column, then right). On the six survey papers this left 1,037 passages instead of 1,243, and every passage except one code line and one formula can be highlighted on its page. `PDF_CLEAN=0` turns it off.
+
+**Citation panel**: 📄 Open page shows the page as a sharp image (216 dpi) with the sentence that supports the answer highlighted (not the whole retrieved passage); pinch or Ctrl + scroll zooms, drag moves, and the toolbar has −, +, Fit and Go to highlight. It runs in the browser with no external scripts. `PDF_PANEL_MODE=viewer` switches back to the pdf.js viewer.
 
 **Pipeline:** PDF → PyMuPDF text + section detection → chunks (512 characters, 100 overlap) → all-MiniLM-L6-v2 embeddings → FAISS + BM25 → RRF fusion → cross-encoder rerank → Ollama → citation verification → FastAPI → Streamlit.
 
@@ -236,7 +240,7 @@ python scripts/verify_backend.py
 <br>
 
 1. In the left sidebar, check for the green **"Ready · qwen3:4b-instruct"** badge.
-2. Under **Library**, click **Upload** (or drag PDFs onto the box) and choose up to 10 PDFs, then click
+2. Under **Library**, click **Upload** (or drag PDFs onto the box) and choose your PDFs (any number, up to 15 MB each and 200 MB per chat), then click
    **Ingest papers**. Each paper then appears under **In this chat** with its pages and passages.
 3. Keep **Ask a question** selected, type your question in the box at the bottom and press Enter.
 4. Read the answer card:
@@ -257,8 +261,8 @@ python scripts/verify_backend.py
 <br>
 
 **Prompt refiner (optional).** Turn on **✨ Prompt refiner** above the conversation. Type a rough
-question, for example `brain parts deja vu`, and press **✨ Refine**. Thesora suggests a precise version,
-such as *"Which brain regions are associated with the phenomenon of deja vu according to the papers?"*,
+question, for example `deepera reranking how good`, and press **✨ Refine**. Thesora suggests a precise version,
+such as *"How much does DeepEra improve over other rerankers?"*,
 with a one-line reason. Then choose:
 
 - **Use suggestion** sends the refined question.
@@ -278,24 +282,30 @@ question itself and never sends anything without your click. It takes about 5–
 
 <br>
 
-Upload the three papers in `data/papers/` (DejaVu1, DejaVu2, DejaVu3), then ask:
+Upload the six papers in `data/papers/` (the RAG-for-science papers from our literature survey: Ai2 Scholar QA,
+DeepEra, HySemRAG, the Agentic Hybrid RAG framework, OpenScholar and PaperQA), then ask:
 
 | Feature | Question | Expected result |
 |---|---|---|
-| F1 exact keyword | `What is the 5-4-3-2-1 technique?` | A grounding exercise using the five senses (DejaVu1) |
-| F1 exact keyword | `What is Dimension-W?` | The "ambient possibility field" (DejaVu3) |
-| F1 meaning search | `Which brain regions are associated with deja vu according to the papers?` | The hippocampus and parietal lobes (DejaVu1) |
-| F1 exact names | `How many frontier language models and molecular regression benchmarks did Busch et al. audit?` | 22 language models across 12 benchmarks (DejaVu2) |
-| F4 + refiner | `Which parts of the brain are linked to the feeling of having lived a moment before?` | **Abstains** (best relevance 0.12): no key terms shared with the paper. Refine it, and the refined question is answered |
-| F2 rerank | `What causes the Mandela Effect in the strange attractor model?` | Top source [1] is DejaVu3: orphaned topological cache pointers |
-| F3 citations | `How much more often were higher reasoning levels flagged for retrieval than the lowest level?` | "89% more often", source ✅ verified |
-| F3 citations | `What are the three types of intuition identified by Feinberg?` | Guesswork, discovering intuition, fundamental intuition, ✅ verified |
-| F4 abstain | `What is the capital of Australia and when was it founded?` | **Abstained**, confidence 0% |
-| F4 abstain | `What GPU model was used to train the models in these papers?` | **Abstained** |
-| Synthesis | (Compare mode) `memory errors and false familiarity` | A table row for each paper + Research Gaps |
-| New chat | Click **New chat**, then ask `What is deja vu?` | Abstains: no documents loaded in this chat |
-| Upload limit | Select 11 PDFs | Blocked: "at most 10 per upload" |
-| Prompt refiner | Turn on **✨ Prompt refiner**, type `brain parts deja vu`, press **✨ Refine** | A precise question about brain regions and deja vu; **Use suggestion** answers it from DejaVu1 |
+| F1 exact keyword | `What is omni-moderation-latest used for?` | Query validation: screening harmful queries (Ai2 Scholar QA) |
+| F1 meaning search | `Which moderation model screens user queries in Ai2 Scholar QA?` | omni-moderation-latest |
+| F1 | `What value of K is used in Reciprocal Rank Fusion?` | K = 60 (HySemRAG), the same constant Thesora uses |
+| F2 rerank | `Which embedding model does PaperQA use?` | text-embedding-ada-002; source [1] is PaperQA, not a paper with a similar sentence |
+| F2 rerank | `What relevance threshold does DeepEra use to filter passages?` | τ = 0.8 (DeepEra) |
+| F3 citations | `How often does GPT-4o hallucinate citations according to OpenScholar?` | 78–90% of the time, ✓ verified |
+| F3 citations | `What citation accuracy and single-pass success rate does HySemRAG report?` | 99.0% and 68.3%, ✓ verified |
+| N1 tables | `What accuracy and precision did PaperQA get on LitQA?` | 69.5% and 87.9%, from Table 2 |
+| N6 parts | `What chunk size does PaperQA use? What is the price of an NVIDIA H100 GPU?` | Part 1: 4,000-character chunks; part 2: "Not found in your papers" |
+| N11 glossary | `How is LFS computed?` | Logic Fidelity Score: an LLM scores answers from 0 to 5 (DeepEra) |
+| F4 abstain | `What is the price of an NVIDIA H100 GPU?` | **Abstained** (DeepEra mentions H100 GPUs, never a price) |
+| F4 abstain | `How do these systems handle speech or audio input?` | **Abstained** |
+| Synthesis | (Compare mode) `Compare how these papers retrieve and rerank evidence` | One row per paper (6 rows) + Research Gaps |
+| Agree? | (Agree? mode) `citation accuracy`, then `cost per question` | 4 papers quoted; then "Only one paper discusses this topic" (PaperQA, $0.18) |
+| New chat | Click **New chat**, then ask `What is LitQA?` | No documents loaded in this chat |
+| Upload limit | Select a PDF over 15 MB | Rejected: "file exceeds the 15 MB limit"; more than 200 MB in one chat is refused too |
+| Prompt refiner | Turn on **✨ Prompt refiner**, type `deepera reranking how good`, press **✨ Refine** | A precise question about DeepEra's reranking results; **Use suggestion** answers it |
+
+The full walk-through with reasons for every question is in `TEST_PLAN_SURVEY_PAPERS.md`.
 
 If a longer answer shows **⚠️ unverified** on a citation, that's F3 working: the model reworded or combined
 claims more than the cited passage directly supports, and Thesora flags it rather than hiding it.
@@ -310,7 +320,7 @@ claims more than the cited passage directly supports, and Thesora flags it rathe
 ```bash
 python scripts/evaluate.py
 ```
-Answers the 7 questions in `data/eval/golden_qa.json` (5 answerable and 2 that must be refused), grades
+Answers the 12 questions in `data/eval/golden_qa.json` (10 answerable and 2 that must be refused), grades
 them with the local model and writes `data/eval/results.json`. Add `--no-judge` to skip the model grading
 (faster), or `--limit 3` for a quick run.
 
@@ -322,7 +332,8 @@ Compares dense-only, BM25-only, hybrid, hybrid + rerank, and hybrid + rerank + f
 
 Both scripts build a fresh corpus from `data/papers/`. Pass `--docs FOLDER` to use other papers.
 
-**Sample results** (Windows laptop, CPU, the 3 sample papers):
+**Answer quality** (v1, Windows laptop, CPU, measured on the earlier three DejaVu sample papers; re-run
+`python scripts/evaluate.py` to measure the survey papers):
 
 | Metric | Score |
 |---|---|
@@ -333,16 +344,23 @@ Both scripts build a fresh corpus from `data/papers/`. Pass `--docs FOLDER` to u
 | Abstention accuracy | 1.00 |
 | Retrieval hit rate | 1.00 |
 
+**Retrieval** (the six survey papers, 20 questions: 10 exact-term, 10 reworded; hit = the passage holding the
+answer is among the 5 passages the model sees):
+
 | Retriever | Hit rate | MRR | Exact-term hit | Reworded hit |
 |---|---|---|---|---|
-| Dense only (naive RAG) | 0.65 | 0.43 | 0.80 | 0.50 |
-| BM25 only | 0.75 | 0.66 | 1.00 | 0.50 |
-| Hybrid (RRF) | 0.75 | 0.64 | 1.00 | 0.50 |
-| Hybrid + rerank | 0.75 | 0.68 | 1.00 | 0.50 |
-| Hybrid + rerank + floor | 0.70 | 0.65 | 1.00 | 0.40 |
+| Dense only (naive RAG) | 0.60 | 0.24 | 0.70 | 0.50 |
+| BM25 only | 0.65 | 0.59 | 0.80 | 0.50 |
+| Hybrid (RRF) | 0.70 | 0.53 | 0.80 | 0.60 |
+| Hybrid + rerank | 0.70 | 0.68 | 0.80 | 0.60 |
+| Hybrid + rerank + floor (v1) | 0.70 | 0.68 | 0.80 | 0.60 |
+| **Thesora v2 (full)** | **0.85** | **0.78** | **0.90** | **0.80** |
 
-The relevance floor cuts the context from 5 passages to about 2, removing the weak passages that most
-often lead to unsupported claims, at a small cost in recall on reworded questions.
+v2 adds paper-scoped search for questions that name a paper, abbreviations spelled out for the reranker,
+the table slot for number questions and context expansion of the 2 best passages.
+
+On these papers the relevance floor removes the 25% of passages that score below 0.1 (the context averages 3.8
+passages instead of 5) without losing any answer passage.
 
 </details>
 
@@ -350,8 +368,9 @@ often lead to unsupported claims, at a small cost in recall on reworded question
 
 ## Chat rules
 
-- **At most 10 PDFs per upload** (`MAX_FILES_PER_REQUEST`). An 11-file request is rejected with HTTP 400
-  before anything is read, and the UI blocks it too. Each file can be at most 100 MB (`MAX_UPLOAD_MB`, now 100 MB; `MAX_SESSION_PDF_MB` 400 MB per chat).
+- **Any number of PDFs per upload**, each at most **15 MB** (`MAX_UPLOAD_MB`), and at most **200 MB** of PDFs per
+  chat (`MAX_SESSION_PDF_MB`); a too-large file is reported as failed while the others are still read.
+  `MAX_FILES_PER_REQUEST` (0 = no limit) can cap the number of files per upload.
 - **Every chat starts empty.** Each chat has its own in-memory index. Opening the UI, refreshing the page
   or pressing **New chat** starts a new chat, so earlier PDFs and references are never used.
 - **Nothing is saved to disk.** Uploads are read from a temporary folder that is deleted straight away.
@@ -371,7 +390,7 @@ often lead to unsupported claims, at a small cost in recall on reworded question
 | `POST /sessions` | Start a new empty chat → `{"session_id": ...}` |
 | `GET /sessions/{id}` | That chat's documents and chunk count |
 | `DELETE /sessions/{id}` | End the chat and forget its PDFs |
-| `POST /sessions/{id}/ingest` | Multipart field `files`, 1–10 PDFs; per-file `ingested` / `skipped` / `failed` |
+| `POST /sessions/{id}/ingest` | Multipart field `files`, any number of PDFs (15 MB each, 200 MB per chat); per-file `ingested` / `skipped` / `failed` |
 | `GET /sessions/{id}/documents` | Documents in that chat |
 | `POST /sessions/{id}/ask` `{"question"}` | Answer, sources (`cited`, `verified`, `match_score`), `confidence`, `abstained` |
 | `POST /sessions/{id}/synthesize` `{"topic"}` | Comparison table + research gaps across that chat's papers |
@@ -423,7 +442,7 @@ app/
   pipelines/sessions.py    isolated per-chat indexes, expiry
   retrieval/retriever.py   F1 hybrid + RRF, F2 rerank + floor
   store/vector_store.py    in-memory FAISS store
-data/papers/               sample papers (DejaVu1–3)
+data/papers/               sample papers (the six survey papers on RAG for science)
 data/eval/                 question sets + script results
 scripts/                   evaluate.py, compare_retrievers.py, verify_backend.py
 tests/                     test_core.py (pipeline), test_api.py (sessions, upload limit, errors),
@@ -480,17 +499,31 @@ Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off
 <br>
 
 - **Mode bar** (Ask a question · Compare papers · Agree? · ✨ Prompt refiner) stays pinned at the top while you scroll.
-- **Each source** is a one-line dropdown: `[n] Smith et al., 2023 · p.4 · Section · ✓ Verified · rel 0.98`.
-  Open it to read the passage, then **📄 Open page** (the page opens on the right with the passage highlighted) or
-  **💡 Explain** (plain-English explanation of that passage).
-- **⋯** next to "Answer" opens the extra checks only when you want them: **Sentence check**, **Table check**
-  (comparisons) and **💡 Explain this answer**.
-- **Side panel** (Citation / Explain tabs) stays beside the answers as you scroll; **✕ Close panel** hides it.
+- **Under every answer** one row of four buttons keeps the card small:
+  - **📚 Citations (n)** opens a pop-up with the confidence bar and every retrieved passage: label, ✓ Verified,
+    rel score, a short preview with the supporting sentence marked, and its own **📄 Open** and **💡 Explain**.
+    The **Sentence check** and **Table check** (comparisons) are at the bottom of the pop-up.
+  - **📄 Open top source** and **💡 Explain** act on the passage the answer leans on most.
+  - **✨ Suggested questions** shows three questions to ask next, written from your own papers, your question and
+    what you asked before; one click asks it. The model writes six candidates and only those whose best passage
+    clears a relevance bar (`SUGGEST_MIN_RELEVANCE=0.5`, checked by retrieval, no extra model call) are shown,
+    best-supported first; the Explain panel's **Ask next** questions are filtered the same way.
+- **Citation numbers**: each number after a sentence is the passage it came from (the n-th entry in 📚 Citations);
+  several numbers mean the sentence combines several passages, often from different papers. Hover a number to
+  see its paper and page.
+- **When Thesora refuses**, it shows "Closest thing your papers say (not an answer)": the sentence of the nearest
+  passage that shares most with the question, quoted with its source, only when that passage is at least loosely
+  related. A refused follow-up in the Explain panel also offers **Try instead** questions.
+- **Side panel**: **Citation** shows the page with the answer's supporting sentence highlighted (zoomable);
+  **Explain** gives a short plain-English explanation and three **Ask next** questions, answered with citations
+  in the panel, plus your own follow-up box with **✨ Refine**. Both tabs keep their content; **✕ Close panel**
+  hides it.
 - Small notes under an answer: part chips for multi-part questions, "N claims removed" after self-repair, and
   "No evidence from … — silence is not disagreement".
-- **Question suggestions** = **✨ Prompt refiner**: switch it on, type a rough question, press **✨ Refine**, then
-  **Use suggestion**, **Edit it** or **Send my original**.
-- Sidebar: **Glossary**, **Download .bib**, **Download notes (.md)**.
+- **✨ Prompt refiner** (mode bar): type a rough question, press **✨ Refine**, then **Use suggestion**,
+  **Edit it** or **Send my original**.
+- Sidebar: uploaded files and this chat's papers show three at a time (scroll for more); **Glossary** lists the
+  most used abbreviations first (five visible, scroll for more); **Download .bib**, **Download notes (.md)**.
 
 </details>
 
@@ -499,7 +532,7 @@ Click a feature to open it. ✅ done · ⚠️ done with a limit or switched off
 
 <br>
 
-Each table becomes its own passage (`chunk_type="table"`, markdown rows, headed by its "Table N: …" caption) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (DejaVu1: two columns on 8 of 9 pages, 2 tables). Column reading order was already correct, so it is unchanged. Tightly justified two-column lines no longer come out glued ("Priortoprocessingaquery"): word spaces are rebuilt from the gaps between letters (`PDF_SPACE_GAP_EM=0.08`), and the PDF highlight matches letter by letter when the PDF itself has no space characters. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
+Each table becomes its own passage (`chunk_type="table"`, markdown rows, headed by its "Table N: …" caption) with page and section, so it can be searched and cited. `scripts/check_extraction.py` reports two-column pages and tables (Ai2 Scholar QA: two columns on 9 of 11 pages, 3 tables). Two-column pages are read column by column (see Clean extraction). Tightly justified two-column lines no longer come out glued ("Priortoprocessingaquery"): word spaces are rebuilt from the gaps between letters (`PDF_SPACE_GAP_EM=0.08`), and the PDF highlight matches letter by letter when the PDF itself has no space characters. Setting: `PDF_LAYOUT_MODE=auto` (or `plain` for text only). Scanned PDFs are still rejected.
 
 </details>
 
@@ -553,7 +586,7 @@ Questions with several parts (`?`, `;`, "as well as", "and also"; each part 4+ w
 
 <br>
 
-Up to 100 MB per PDF (`MAX_UPLOAD_MB`), a warning above 5 MB (`LARGE_FILE_WARN_MB`), and at most 400 MB of PDFs per chat (`MAX_SESSION_PDF_MB`) with a friendly error. Still 10 PDFs per upload.
+Up to 15 MB per PDF (`MAX_UPLOAD_MB`), a warning above 5 MB (`LARGE_FILE_WARN_MB`), and at most 200 MB of PDFs per chat (`MAX_SESSION_PDF_MB`), any number of files with a friendly error. Still 10 PDFs per upload.
 
 </details>
 
@@ -589,7 +622,7 @@ If a sentence fails the check, the model gets one stricter retry; anything still
 
 <br>
 
-**💡 Explain** opens a What / Why / How / Example explanation from that answer's passages only, always labelled "Plain-English explanation — not evidence"; follow-up questions supported. The sidebar **Glossary** lists abbreviations found in the papers (scispaCy's Schwartz–Hearst detector, no model download); their long forms are added to keyword search. Each term appears once per chat ("LLM — in 4 papers"), and "LLMs" counts as "LLM".
+**💡 Explain** gives a short plain-English explanation of an answer or a passage, from that answer's passages only and labelled "Plain-English explanation — not evidence", then three **Ask next** follow-up questions; clicking one answers it through the normal cited pipeline (it abstains when the papers do not say). Citation and Explain keep their content when you switch tabs. The sidebar **Glossary** lists abbreviations found in the papers (scispaCy's Schwartz–Hearst detector, no model download); their long forms are added to keyword search. Each term appears once per chat ("LLM — in 4 papers"), and "LLMs" counts as "LLM".
 
 </details>
 
@@ -629,7 +662,8 @@ New endpoints (all additive): `GET /sessions/{id}/metadata`, `PATCH /sessions/{i
 
 <br>
 
-**N2 retrieval comparison** (20 questions, `compare_retrievers.py`, hit rate / MRR):
+**N2 retrieval comparison** (earlier DejaVu sample papers, 20 questions, `compare_retrievers.py`, hit rate / MRR;
+the current survey-paper numbers are in *Run the evaluation and retrieval comparison* above):
 
 | Mode | v1 | v2 (tables) | v2 + contextual headers |
 |---|---|---|---|
@@ -637,7 +671,8 @@ New endpoints (all additive): `GET /sessions/{id}/metadata`, `PATCH /sessions/{i
 | Hybrid (RRF) | 0.75 / 0.64 | 0.80 / 0.65 | 0.70 / 0.60 |
 | Hybrid + rerank + floor (Thesora) | 0.70 / 0.65 | 0.70 / 0.65 | 0.70 / 0.65 |
 
-**N13 stress test** (`stress_eval.py --limit 3`, qwen3:4b-instruct, NLI off):
+**N13 stress test** (`stress_eval.py --limit 3`, qwen3:4b-instruct, NLI off, earlier DejaVu sample papers; the
+stress cases now use the survey-paper golden questions):
 
 | Group | Citation recall | Citation precision | Distractor cited | Altered numbers repeated | Distractor ranked first |
 |---|---|---|---|---|---|

@@ -1,35 +1,60 @@
 [
-  {
-    "question": "How many frontier language models and molecular regression benchmarks did Busch et al. audit?",
-    "expected_answer": "Busch et al. audited 22 frontier language models across 12 molecular regression benchmarks.",
-    "expected_doc": "DejaVu2.pdf"
-  },
-  {
-    "question": "How much more often were higher reasoning levels flagged for retrieval than the lowest level?",
-    "expected_answer": "Experiments at higher reasoning levels were flagged for retrieval 89% more often than at the lowest reasoning level.",
-    "expected_doc": "DejaVu2.pdf"
-  },
-  {
-    "question": "What are the three types of intuition identified by Feinberg?",
-    "expected_answer": "The three types are intuition-guesswork, intuition that discovers something new, and fundamental intuition.",
-    "expected_doc": "DejaVu1.pdf"
-  },
-  {
-    "question": "Which brain regions are involved in deja vu according to Cleary and Brown?",
-    "expected_answer": "The hippocampus and parietal lobes are involved, and disruptions may cause incorrect reconstruction of events in memory.",
-    "expected_doc": "DejaVu1.pdf"
-  },
-  {
-    "question": "What causes the Mandela Effect in the strange attractor model?",
-    "expected_answer": "Orphaned topological cache pointers left after a bifurcation of a macro-attractor produce collective divergent memories.",
-    "expected_doc": "DejaVu3.pdf"
-  },
-  {
-    "question": "What is the capital of Australia and when was it founded?",
-    "should_abstain": true
-  },
-  {
-    "question": "What GPU model was used to train the models in these papers?",
-    "should_abstain": true
-  }
+ {
+  "question": "What chunk size and embedding model does PaperQA use for papers?",
+  "expected_answer": "PaperQA splits papers into overlapping 4,000-character chunks embedded with OpenAI's text-embedding-ada-002 model.",
+  "expected_doc": "PaperQA.pdf"
+ },
+ {
+  "question": "What accuracy and precision did PaperQA achieve on LitQA?",
+  "expected_answer": "PaperQA reached 69.5% accuracy and 87.9% precision on LitQA.",
+  "expected_doc": "PaperQA.pdf"
+ },
+ {
+  "question": "How often does GPT-4o hallucinate citations according to OpenScholar?",
+  "expected_answer": "GPT-4o hallucinates (fabricates) citations 78–90% of the time.",
+  "expected_doc": "Open Scholar.pdf"
+ },
+ {
+  "question": "How many open-access papers are in the OpenScholar data store?",
+  "expected_answer": "The OpenScholar data store (OSDS) contains 45 million open-access papers.",
+  "expected_doc": "Open Scholar.pdf"
+ },
+ {
+  "question": "What relevance threshold does DeepEra use to filter passages?",
+  "expected_answer": "DeepEra filters out passages whose relevance score is below a threshold of τ = 0.8.",
+  "expected_doc": "DeepEra.pdf"
+ },
+ {
+  "question": "How many QA instances and subjects does the SciRAG-SSLI dataset contain?",
+  "expected_answer": "SciRAG-SSLI contains about 300K scientific QA instances across 10 subjects, built from a 10M scientific corpus.",
+  "expected_doc": "DeepEra.pdf"
+ },
+ {
+  "question": "What citation accuracy and single-pass success rate does HySemRAG report?",
+  "expected_answer": "HySemRAG reports 99.0% citation accuracy in validated responses and a 68.3% single-pass success rate.",
+  "expected_doc": "HySEMRAG.pdf"
+ },
+ {
+  "question": "Which reranker does Ai2 Scholar QA use and how many passages does it keep?",
+  "expected_answer": "Ai2 Scholar QA uses the mxbai-rerank-large-v1 cross-encoder and keeps the top 50 passages.",
+  "expected_doc": "Ai2 Scholar QA.pdf"
+ },
+ {
+  "question": "What chunk size and overlap does the Agentic Hybrid RAG framework use?",
+  "expected_answer": "It splits texts into chunks of 2,024 characters with a 50-character overlap, embedded with all-MiniLM-L6-v2.",
+  "expected_doc": "Agentic Hybrid RAG.pdf"
+ },
+ {
+  "question": "What value of K does HySemRAG use in Reciprocal Rank Fusion?",
+  "expected_answer": "HySemRAG uses K = 60 in Reciprocal Rank Fusion.",
+  "expected_doc": "HySEMRAG.pdf"
+ },
+ {
+  "question": "What is the capital of Australia and when was it founded?",
+  "should_abstain": true
+ },
+ {
+  "question": "What is the price of an NVIDIA H100 GPU?",
+  "should_abstain": true
+ }
 ]

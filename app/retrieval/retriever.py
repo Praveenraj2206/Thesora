@@ -250,6 +250,13 @@ class HybridRetriever:
             if scope:
                 candidates = self._per_document_candidates(query, query_vector, config.SCOPED_POOL, docs=scope)
                 seen = {c.store_index for c in candidates}
+                for index in self._table_indexes(scope):  # a named paper's tables always reach the reranker
+                    if index not in seen:
+                        seen.add(index)
+                        candidates.append(RetrievedChunk(
+                            chunk=self._store.get_chunk(index), store_index=index,
+                            dense_score=float(np.dot(query_vector.reshape(-1), self._store.reconstruct(index))),
+                            bm25_score=None, rrf_score=0.0))
                 for alt in dict.fromkeys(q for q in alt_queries if q.strip() and q != query):
                     # the name-free wording finds passages the paper's name hides ("the threshold is 0.8")
                     self._sparse_query = None
@@ -268,6 +275,18 @@ class HybridRetriever:
         top = _with_table_slot(query, scored, final_k)
         floor = config.RELEVANCE_FLOOR if min_relevance is None else min_relevance
         return apply_relevance_floor(top, floor)
+
+    def _table_indexes(self, docs: set[str]) -> list[int]:
+        """Store rows of the table passages of ``docs`` (papers have few tables; cached per store size)."""
+        size = len(self._store)
+        if getattr(self, "_tables_cache_size", -1) != size:
+            self._tables_by_doc: dict[str, list[int]] = {}
+            for i in range(size):
+                chunk = self._store.get_chunk(i)
+                if chunk.chunk_type == "table":
+                    self._tables_by_doc.setdefault(chunk.doc_id, []).append(i)
+            self._tables_cache_size = size
+        return [i for d in docs for i in self._tables_by_doc.get(d, [])][: config.SCOPED_MAX_TABLES]
 
     def _rescore_with(self, alt_queries: Sequence[str], scored: list[RetrievedChunk]) -> None:
         """Keep each passage's best cross-encoder score over several phrasings of the question."""

@@ -211,6 +211,29 @@ div:has(> .stElementContainer .th-card-mark) {
 [data-testid="stMarkdownContainer"] td { border: 1px solid var(--border); padding: .55rem .7rem; vertical-align: top; }
 [data-testid="stMarkdownContainer"] tr:nth-child(even) td { background: var(--surface-2); }
 
+/* refusal: the closest passage, quoted (not an answer) */
+.th-closest { margin:.6rem 0 .2rem; padding:.6rem .8rem; border-left:3px solid var(--border); background:var(--surface-2);
+  border-radius:8px; font-size:.9rem; line-height:1.55; color:var(--text); }
+.th-closest-label { font-size:.75rem; color:var(--muted); margin-bottom:.25rem; }
+.cite[title] { cursor: help; }
+
+/* citations pop-up */
+[data-testid="stPopoverBody"] { width: min(560px, 92vw); max-height: 70vh; overflow-y: auto; }
+.th-cite-head { display:flex; justify-content:space-between; gap:.6rem; align-items:baseline; margin-top:.7rem;
+  padding-top:.6rem; border-top:1px solid var(--border); font-size:.9rem; }
+.th-cite-head em { font-style:normal; flex:1; }
+.th-cite-head span { color: var(--muted); font-size:.78rem; white-space:nowrap; }
+.th-cite-text { font-size:.86rem !important; line-height:1.5; }
+/* sidebar: the uploader's file list shows about three files, scroll for the rest */
+[data-testid="stSidebar"] [data-testid="stFileChips"] { max-height: 9.6rem; overflow-y: auto; }
+
+/* readable source passages */
+.th-src-read { padding:0 !important; border:0 !important; font-size:.95rem; line-height:1.6; }
+.th-src-read p { margin:0 0 .55rem; }
+.th-src-read .th-src-heading strong { font-weight:650; letter-spacing:.01em; }
+.th-src-read .th-src-more { opacity:.6; }
+.th-src-read mark { background: rgba(255,205,40,.45); color: inherit; border-bottom: 2px solid #e08a00; padding: 0 1px; border-radius: 2px; }
+
 /* -------- Thesora components -------- */
 .th-card-mark { display: none; }
 .stElementContainer:has(.th-card-mark), [data-testid="stElementContainer"]:has(.th-card-mark) { display: none; }
@@ -364,6 +387,6 @@ def build_css(mode: str) -> str:
 PANEL_CSS = """<style>
 .block-container, [data-testid='stBottomBlockContainer'] { max-width: 1400px; }
 /* the side panel column stays on screen while the chat scrolls */
-[data-testid="stColumn"]:has(.st-key-th_sidepanel) { position: sticky; top: 3.6rem; align-self: flex-start;
-  max-height: calc(100vh - 4.5rem); overflow-y: auto; }
+[data-testid="stColumn"]:has(.st-key-th_sidepanel) { position: sticky; top: 4.4rem; align-self: flex-start;
+  max-height: calc(100vh - 5.2rem); overflow-y: auto; scroll-padding-top: .5rem; }
 </style>"""

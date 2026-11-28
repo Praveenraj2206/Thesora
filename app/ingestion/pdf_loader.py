@@ -11,7 +11,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from app import config
 from app.core.errors import PDFLoadError
@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 _BOLD_FLAG = 16
 _WHITESPACE_RE = re.compile(r"\s+")
 _NON_HEADING_RE = re.compile(r"^[\d\W_]+$")
-_NUMBERED_HEADING_RE = re.compile(r"^(\d+(\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+\S")
+_NUMBERED_HEADING_RE = re.compile(r"^(\d+(\.\d+)*\.?|[IVX]+\.|[A-Z]\.?)\s+[A-Z]")
+_SECTION_NUMBER_RE = re.compile(r"^(\d+(\.\d+)*\.?|[A-Z](\.\d+)*)$")
 _KNOWN_HEADINGS = frozenset(
     {
         "abstract", "introduction", "background", "related work", "methodology", "methods",
@@ -43,6 +44,7 @@ class _Line:
 
 
 _BLOCK_BREAK = _Line("", 0.0, False)
+_REFERENCES_RE = re.compile(r"^(\d+\.?\s*)?(references|bibliography|works cited|literature cited)\s*$", re.IGNORECASE)
 
 
 def is_heading_line(text: str, size: float, bold: bool, body_size: float) -> bool:
@@ -56,6 +58,8 @@ def is_heading_line(text: str, size: float, bold: bool, body_size: float) -> boo
     if not config.HEADING_MIN_CHARS <= len(candidate) <= config.HEADING_MAX_CHARS:
         return False
     if _NON_HEADING_RE.match(candidate) or candidate.endswith((".", ",", ";")):
+        return False
+    if not re.search(r"[A-Za-z]{3,}", candidate):  # "C D", "(a)": figure panel letters, not a section
         return False
     if body_size > 0 and size >= body_size * config.HEADING_SIZE_RATIO:
         return True
@@ -82,6 +86,7 @@ def _build_pages(pages_lines: list[list[_Line]], doc_id: str) -> list[PageText]:
     body_size = _body_font_size(pages_lines)
     pages: list[PageText] = []
     current_section = ""
+    in_references = False
     for number, lines in enumerate(pages_lines, start=1):
         start_section = current_section
         pieces: list[str] = []
@@ -90,6 +95,11 @@ def _build_pages(pages_lines: list[list[_Line]], doc_id: str) -> list[PageText]:
         previous_was_heading = False
         for line in lines:
             is_heading = bool(line.text) and is_heading_line(line.text, line.size, line.bold, body_size)
+            if config.PDF_SKIP_REFERENCES:
+                if is_heading:
+                    in_references = bool(_REFERENCES_RE.match(line.text.strip()))
+                if in_references:
+                    continue  # the reference list names other papers; it is not this paper's content
             if is_heading and previous_was_heading and headings:
                 # A heading wrapped over several lines: merge it into one title.
                 start, earlier = headings[-1]
@@ -153,19 +163,43 @@ def line_text(raw_line: dict) -> str:
     return _WHITESPACE_RE.sub(" ", "".join(out)).strip()
 
 
-def _extract_lines_pymupdf(page: object) -> list[_Line]:
-    """Extract ordered lines (with font info) from one PyMuPDF page."""
-    layout = page.get_text("rawdict", sort=True)  # type: ignore[attr-defined]
-    lines: list[_Line] = []
-    for block in layout.get("blocks", []):
-        if block.get("type", 0) != 0:
+_SUPERSCRIPT_FLAG = 1
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"(?<=\w) +([,.;:!?)\]])")
+_MARKER_RE = re.compile(r"^[\d,–\-∗*†‡§¶]+$")
+
+
+def _without_markers(spans: list[dict]) -> list[dict]:
+    """Drop footnote and citation markers printed as superscripts ("latest²", "hallucinations²,³"):
+    small raised spans made only of digits, commas, dashes or footnote symbols."""
+    if not config.PDF_DROP_SUPERSCRIPT_MARKERS or len(spans) < 2:
+        return spans
+    biggest = max(float(s.get("size", 0.0)) for s in spans)
+    kept = []
+    for span in spans:
+        text = "".join(c.get("c", "") for c in span.get("chars", [])) or span.get("text", "")
+        raised = bool(int(span.get("flags", 0)) & _SUPERSCRIPT_FLAG) or float(span.get("size", 0.0)) < biggest * 0.8
+        if raised and _MARKER_RE.match(text.strip() or "x"):
             continue
+        kept.append(span)
+    return kept or spans
+
+
+def _extract_lines_pymupdf(page: object, raw: Optional[dict] = None, page_index: int = 0,
+                           layout: Optional[Any] = None) -> list[_Line]:
+    """Ordered lines (with font info) of one page's useful text blocks (see ``clean_layout``)."""
+    from app.ingestion.clean_layout import DocLayout, clean_blocks
+
+    raw = raw if raw is not None else page.get_text("rawdict")  # type: ignore[attr-defined]
+    layout = layout or DocLayout(body_size=0.0)
+    lines: list[_Line] = []
+    for block in clean_blocks(page, raw, page_index, layout):
         for raw_line in block.get("lines", []):
             spans = [s for s in raw_line.get("spans", []) if any(not c.get("c", " ").isspace() for c in s.get("chars", []))
                      or s.get("text", "").strip()]
             if not spans:
                 continue
-            text = line_text({"spans": spans})
+            spans = _without_markers(spans)
+            text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", line_text({"spans": spans}))
             if not text:
                 continue
             size = max(float(s.get("size", 0.0)) for s in spans)
@@ -173,23 +207,35 @@ def _extract_lines_pymupdf(page: object) -> list[_Line]:
                 bool(int(s.get("flags", 0)) & _BOLD_FLAG) or "bold" in str(s.get("font", "")).lower()
                 for s in spans
             )
+            previous = lines[-1] if lines else None
+            if previous is not None and previous.text and _SECTION_NUMBER_RE.match(previous.text) \
+                    and text[:1].isupper() and abs(previous.size - size) < 0.6:
+                # "2" + "Pipeline", "A" + "Python Package Usage": one heading, as printed
+                lines[-1] = _Line(f"{previous.text} {text}", size, bold and previous.bold)
+                continue
             lines.append(_Line(text, size, bold))
         lines.append(_BLOCK_BREAK)
     return lines
 
 
 def _load_with_pymupdf(path: Path, doc_id: str) -> list[PageText]:
-    """Load a PDF with PyMuPDF."""
+    """Load a PDF with PyMuPDF: useful text only, two columns read column by column."""
     try:
         import pymupdf as fitz  # PyMuPDF >= 1.24
     except ImportError:  # older PyMuPDF releases only expose "fitz"
         import fitz
+    from app.ingestion.clean_layout import document_layout
+    from app.ingestion.layout import detect_tables
 
     document = fitz.open(str(path))
     try:
         if document.needs_pass:
             raise PDFLoadError(f"{path.name} is password-protected.")
-        pages_lines = [_extract_lines_pymupdf(page) for page in document]
+        raws = [page.get_text("rawdict") for page in document]
+        layout = document_layout(document, raws)
+        layout.tables = detect_tables(document, path)
+        pages_lines = [_extract_lines_pymupdf(page, raw, i, layout)
+                       for i, (page, raw) in enumerate(zip(document, raws))]
     finally:
         document.close()
     return _build_pages(pages_lines, doc_id)

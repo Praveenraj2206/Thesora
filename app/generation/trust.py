@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from app import config
-from app.generation.verifier import CITATION_RE, _segments, extract_cited_numbers, score_claim
+from app.generation.verifier import CITATION_RE, _segments, extract_cited_numbers, extract_claims, score_claim
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,53 @@ def best_premise(passage: str, claim: str, n: int = config.NLI_PREMISE_SENTENCES
 
 
 # ----------------------------------------------------------------------------- N5 sentences
+_EVIDENCE_SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9“\"(\[])")
+
+
+def evidence_sentences(answer: str, chunk_texts: Mapping[int, str], subjects: Optional[Mapping[int, str]] = None,
+                       headings: Optional[Mapping[int, str]] = None) -> dict[int, list[str]]:
+    """For each cited passage, the sentence(s) that best support the answer's claims citing it.
+
+    The passage text is split into sentences; a leading section heading ("2 Pipeline") is removed, and
+    run-in labels such as "Query Validation." are never chosen on their own. For every claim the
+    best-matching sentence is kept, plus any other sentence scoring almost as well (a claim joining two
+    sentences). This is what the citation panel highlights: the answer's evidence, not the whole passage."""
+    subjects, headings = subjects or {}, headings or {}
+    chosen: dict[int, list[str]] = {}
+    for claim, numbers in extract_claims(answer):
+        for n in numbers:
+            if n not in chunk_texts:
+                continue
+            text = " ".join(chunk_texts[n].split())
+            heading = " ".join((headings.get(n) or "").split())
+            if heading and text.startswith(heading):
+                text = text[len(heading):].lstrip(" .:")
+            sentences = [x.strip() for x in _EVIDENCE_SENT_RE.split(text) if len(x.split()) >= config.EVIDENCE_MIN_WORDS]
+            scored = sorted(((score_claim(claim, x, subjects.get(n, ""))[1], x) for x in sentences), reverse=True)
+            if not scored or scored[0][0] < config.EVIDENCE_MIN_SCORE:
+                continue
+            best = scored[0][0]
+            for score, sentence in scored[: config.EVIDENCE_MAX_SENTENCES]:
+                if score >= best - config.EVIDENCE_SCORE_MARGIN and sentence not in chosen.setdefault(n, []):
+                    chosen[n].append(sentence)
+    return chosen
+
+
+def closest_sentence(question: str, passage: str, heading: str = "", subject: str = "") -> list[str]:
+    """After a refusal: the passage sentence that shares most with the question (to quote, not to answer)."""
+    from app.generation.verifier import content_recall
+
+    text = " ".join(passage.split())
+    heading = " ".join((heading or "").split())
+    if heading and text.startswith(heading):
+        text = text[len(heading):].lstrip(" .:")
+    sentences = [x.strip() for x in _EVIDENCE_SENT_RE.split(text) if len(x.split()) >= config.EVIDENCE_MIN_WORDS]
+    if not sentences:
+        return []
+    best = max(sentences, key=lambda x: content_recall(question, x, subject))
+    return [best] if content_recall(question, best, subject) > 0 else []
+
+
 def sentence_report(answer: str, chunk_texts: Mapping[int, str], nli: Optional[NLIChecker] = None,
                     subjects: Optional[Mapping[int, str]] = None) -> list[dict[str, Any]]:
     """One entry per answer sentence: text, citations, status (verified|weak|unverified|uncited), score, meaning."""

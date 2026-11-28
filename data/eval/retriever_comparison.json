@@ -4,128 +4,156 @@
     "dense-only": {
       "all": {
         "n": 20,
-        "hit": 0.65,
-        "mrr": 0.433
+        "hit": 0.6,
+        "mrr": 0.237
       },
       "exact": {
         "n": 10,
-        "hit": 0.8,
-        "mrr": 0.558
+        "hit": 0.7,
+        "mrr": 0.27
       },
       "paraphrase": {
         "n": 10,
         "hit": 0.5,
-        "mrr": 0.308
+        "mrr": 0.203
       }
     },
     "bm25-only": {
       "all": {
         "n": 20,
-        "hit": 0.75,
-        "mrr": 0.654
+        "hit": 0.65,
+        "mrr": 0.588
       },
       "exact": {
         "n": 10,
-        "hit": 1.0,
-        "mrr": 0.95
+        "hit": 0.8,
+        "mrr": 0.8
       },
       "paraphrase": {
         "n": 10,
         "hit": 0.5,
-        "mrr": 0.358
+        "mrr": 0.375
       }
     },
     "hybrid (RRF)": {
       "all": {
         "n": 20,
-        "hit": 0.8,
-        "mrr": 0.647
+        "hit": 0.7,
+        "mrr": 0.525
       },
       "exact": {
         "n": 10,
-        "hit": 1.0,
-        "mrr": 0.9
+        "hit": 0.8,
+        "mrr": 0.75
       },
       "paraphrase": {
         "n": 10,
         "hit": 0.6,
-        "mrr": 0.395
+        "mrr": 0.3
       }
     },
     "hybrid + rerank": {
       "all": {
         "n": 20,
-        "hit": 0.75,
+        "hit": 0.7,
         "mrr": 0.675
       },
       "exact": {
         "n": 10,
-        "hit": 1.0,
-        "mrr": 0.95
+        "hit": 0.8,
+        "mrr": 0.8
       },
       "paraphrase": {
         "n": 10,
-        "hit": 0.5,
-        "mrr": 0.4
+        "hit": 0.6,
+        "mrr": 0.55
       }
     },
     "hybrid + rerank + floor": {
       "all": {
         "n": 20,
         "hit": 0.7,
-        "mrr": 0.65
+        "mrr": 0.675
       },
       "exact": {
         "n": 10,
-        "hit": 1.0,
-        "mrr": 0.95
+        "hit": 0.8,
+        "mrr": 0.8
       },
       "paraphrase": {
         "n": 10,
-        "hit": 0.4,
-        "mrr": 0.35
+        "hit": 0.6,
+        "mrr": 0.55
+      }
+    },
+    "Thesora v2 (full)": {
+      "all": {
+        "n": 20,
+        "hit": 0.85,
+        "mrr": 0.777
+      },
+      "exact": {
+        "n": 10,
+        "hit": 0.9,
+        "mrr": 0.833
+      },
+      "paraphrase": {
+        "n": 10,
+        "hit": 0.8,
+        "mrr": 0.72
       }
     }
   },
   "unreachable": [],
   "misses": {
     "dense-only": [
-      "What does 89% more often refer to? (expected DejaVu2.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf'])",
-      "Who are Golchin and Surdeanu? (expected DejaVu2.pdf, got ['DejaVu1.pdf'])",
-      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
-      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
-      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+      "What is ScholarQABench? (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "What is rerank-english-v3.0 used for? (expected Agentic Hybrid RAG.pdf, got ['DeepEra.pdf'])",
+      "What is LitQA? (expected PaperQA.pdf, got ['PaperQA.pdf'])",
+      "Which model screens user queries for harmful content in Ai2  (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf'])",
+      "By how much does the small open model beat GPT-4o on multi-p (expected Open Scholar.pdf, got ['Open Scholar.pdf', 'PaperQA.pdf'])",
+      "How often did experts prefer the system's answers over exper (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "How many human-labelled preference pairs were used to fine-t (expected Agentic Hybrid RAG.pdf, got ['DeepEra.pdf', 'Open Scholar.pdf'])",
+      "How many passages does DeepEra keep for answer generation? (expected DeepEra.pdf, got ['DeepEra.pdf'])"
     ],
     "bm25-only": [
-      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
-      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "How can wrongly rebuilt memories explain the sense of famili (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+      "What is ScholarQABench? (expected Open Scholar.pdf, got ['DeepEra.pdf', 'Open Scholar.pdf', 'PaperQA.pdf'])",
+      "What is LitQA? (expected PaperQA.pdf, got ['DeepEra.pdf', 'Open Scholar.pdf', 'PaperQA.pdf'])",
+      "Which model screens user queries for harmful content in Ai2  (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf'])",
+      "Which illness and pollutant did HySemRAG apply its framework (expected HySEMRAG.pdf, got ['HySEMRAG.pdf'])",
+      "How long does one query take on an ordinary computer in the  (expected Agentic Hybrid RAG.pdf, got ['Agentic Hybrid RAG.pdf', 'Ai2 Scholar QA.pdf', 'DeepEra.pdf'])",
+      "How many passages does DeepEra keep for answer generation? (expected DeepEra.pdf, got ['DeepEra.pdf'])",
+      "How long does Ai2 Scholar QA take to produce a full report? (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf', 'Open Scholar.pdf'])"
     ],
     "hybrid (RRF)": [
-      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
-      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])"
+      "What is ScholarQABench? (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "What is LitQA? (expected PaperQA.pdf, got ['PaperQA.pdf'])",
+      "Which model screens user queries for harmful content in Ai2  (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf'])",
+      "How often did experts prefer the system's answers over exper (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "Which illness and pollutant did HySemRAG apply its framework (expected HySEMRAG.pdf, got ['HySEMRAG.pdf', 'Open Scholar.pdf'])",
+      "How many passages does DeepEra keep for answer generation? (expected DeepEra.pdf, got ['DeepEra.pdf'])"
     ],
     "hybrid + rerank": [
-      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
-      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu3.pdf'])",
-      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf', 'DejaVu2.pdf', 'DejaVu3.pdf'])"
+      "What is ScholarQABench? (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "What is LitQA? (expected PaperQA.pdf, got ['PaperQA.pdf'])",
+      "Which model screens user queries for harmful content in Ai2  (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf'])",
+      "How often did experts prefer the system's answers over exper (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "Which illness and pollutant did HySemRAG apply its framework (expected HySEMRAG.pdf, got ['HySEMRAG.pdf'])",
+      "How many passages does DeepEra keep for answer generation? (expected DeepEra.pdf, got ['DeepEra.pdf'])"
     ],
     "hybrid + rerank + floor": [
-      "How many AI systems and chemistry test sets were examined in (expected DejaVu2.pdf, got ['DejaVu2.pdf'])",
-      "Which parts of the brain are linked to the feeling of having (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "How can wrongly rebuilt memories explain the sense of famili (expected DejaVu1.pdf, got ['DejaVu1.pdf'])",
-      "Why would a whole crowd remember the same wrong detail of a  (expected DejaVu3.pdf, got ['DejaVu3.pdf'])",
-      "Which brain signals clash according to the recognition-memor (expected DejaVu3.pdf, got ['DejaVu3.pdf'])",
-      "How does the paper say two nearly equal future outcomes lead (expected DejaVu3.pdf, got ['DejaVu1.pdf'])"
+      "What is ScholarQABench? (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "What is LitQA? (expected PaperQA.pdf, got ['PaperQA.pdf'])",
+      "Which model screens user queries for harmful content in Ai2  (expected Ai2 Scholar QA.pdf, got ['Ai2 Scholar QA.pdf'])",
+      "How often did experts prefer the system's answers over exper (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "Which illness and pollutant did HySemRAG apply its framework (expected HySEMRAG.pdf, got ['HySEMRAG.pdf'])",
+      "How many passages does DeepEra keep for answer generation? (expected DeepEra.pdf, got ['DeepEra.pdf'])"
+    ],
+    "Thesora v2 (full)": [
+      "What is LitQA? (expected PaperQA.pdf, got ['PaperQA.pdf'])",
+      "How often did experts prefer the system's answers over exper (expected Open Scholar.pdf, got ['Open Scholar.pdf'])",
+      "Which illness and pollutant did HySemRAG apply its framework (expected HySEMRAG.pdf, got ['HySEMRAG.pdf'])"
     ]
   },
-  "weak_chunk_rate": 0.65
+  "weak_chunk_rate": 0.25
 }

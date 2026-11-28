@@ -33,7 +33,7 @@ from app import config  # noqa: E402
 EXIT_OK, EXIT_FAILURE = 0, 1
 QA_PATH = config.EVAL_DIR / "retrieval_qa.json"
 OUTPUT_PATH = config.EVAL_DIR / "retriever_comparison.json"
-MODES = ("dense-only", "bm25-only", "hybrid (RRF)", "hybrid + rerank", "hybrid + rerank + floor")
+MODES = ("dense-only", "bm25-only", "hybrid (RRF)", "hybrid + rerank", "hybrid + rerank + floor", "Thesora v2 (full)")
 KINDS = ("exact", "paraphrase")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -94,12 +94,16 @@ def ranked_texts(assistant: Any, question: str, k: int) -> dict[str, list[tuple[
     )
     reranked = retriever.retrieve(question, min_relevance=0.0)
     floored = retriever.retrieve(question)
+    # v2: paper-named questions searched inside that paper, abbreviations spelled out, tables kept for number
+    # questions, and the best 2 passages expanded with their neighbours (what the model and verifier see).
+    full = assistant.retrieve_for(question)
     return {
         "dense-only": pack([i for i, _ in retriever.dense_search(qvec, k)]),
         "bm25-only": pack([i for i, _ in retriever.sparse_search(question, k)]),
         "hybrid (RRF)": pack([c.store_index for c in fused][:k]),
         "hybrid + rerank": pack([c.store_index for c in reranked]),
         "hybrid + rerank + floor": pack([c.store_index for c in floored]),
+        "Thesora v2 (full)": [(c.chunk.doc_id, assistant._context_text(c.chunk, n)) for n, c in enumerate(full, start=1)],
         "_junk": [("", f"{c.relevance:.4f}") for c in reranked],
         "_kept": [("", str(len(floored)))],
     }

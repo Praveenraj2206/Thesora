@@ -9,7 +9,7 @@ Endpoints
   POST   /sessions                            start a new, empty chat -> {session_id}
   GET    /sessions/{session_id}               documents + chunk count of that chat
   DELETE /sessions/{session_id}               end the chat and forget its PDFs
-  POST   /sessions/{session_id}/ingest        upload 1..MAX_FILES_PER_REQUEST PDFs (field "files")
+  POST   /sessions/{session_id}/ingest        upload PDFs (field "files"; MAX_UPLOAD_MB each, MAX_SESSION_PDF_MB per chat)
   GET    /sessions/{session_id}/documents     documents in that chat
   POST   /sessions/{session_id}/ask           {"question"} -> grounded, verified answer
   POST   /sessions/{session_id}/synthesize    {"topic"}    -> comparison table + research gaps
@@ -273,10 +273,10 @@ def save_upload(file: UploadFile, folder: Path) -> Path:
 
 
 def check_file_count(count: int) -> None:
-    """Enforce 1..MAX_FILES_PER_REQUEST files per upload request."""
+    """At least one file; at most MAX_FILES_PER_REQUEST when that limit is set (0 = any number)."""
     if count == 0:
         raise UploadError("No files were uploaded. Attach at least one PDF in the 'files' field.")
-    if count > config.MAX_FILES_PER_REQUEST:
+    if config.MAX_FILES_PER_REQUEST and count > config.MAX_FILES_PER_REQUEST:
         raise UploadError(
             f"You sent {count} files, but at most {config.MAX_FILES_PER_REQUEST} PDFs are allowed per upload. "
             "Split them into smaller batches."
@@ -285,7 +285,7 @@ def check_file_count(count: int) -> None:
 
 @app.post("/sessions/{session_id}/ingest")
 def ingest(session_id: str, files: list[UploadFile] = File(default=[])) -> JSONResponse:
-    """Upload up to MAX_FILES_PER_REQUEST PDFs into this chat.
+    """Upload PDFs into this chat (each up to MAX_UPLOAD_MB, all together up to MAX_SESSION_PDF_MB).
 
     Each file is reported separately (``ingested`` / ``skipped`` duplicate / ``failed`` with a reason).
     Files are parsed from a private temporary folder that is deleted afterwards, so no PDF is kept on disk.
@@ -408,6 +408,11 @@ class HighlightRequest(BaseModel):
     passage: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS * 4)
 
 
+class SuggestRequest(BaseModel):
+    question: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
+    answer_id: Optional[str] = Field(default=None, max_length=64)
+
+
 class ExplainRequest(BaseModel):
     answer_id: str = Field(min_length=1, max_length=64)
     selected_text: str = Field(min_length=MIN_TEXT_CHARS, max_length=MAX_TEXT_CHARS)
@@ -431,12 +436,14 @@ def get_pdf(session_id: str, doc_id: str):
 
 
 @app.get("/sessions/{session_id}/documents/{doc_id}/page/{page}.png")
-def get_page_png(session_id: str, doc_id: str, page: int, passage: Optional[str] = None):
-    """Fallback image of one page (with the passage highlighted) when the PDF viewer cannot load."""
+def get_page_png(session_id: str, doc_id: str, page: int, passage: Optional[str] = None,
+                 zoom: Optional[float] = None):
+    """One page as PNG: ``zoom`` x 72 dpi (capped); with ``passage`` the passage is highlighted in the image."""
     from fastapi.responses import Response
     from app.generation.viewer import page_png
 
-    return Response(page_png(_pdf(session_id, doc_id), page, passage), media_type="image/png")
+    scale = min(max(zoom, 0.5), config.PANEL_PAGE_ZOOM_MAX) if zoom else None
+    return Response(page_png(_pdf(session_id, doc_id), page, passage, scale), media_type="image/png")
 
 
 @app.post("/sessions/{session_id}/highlight")
@@ -452,6 +459,12 @@ def post_explain(session_id: str, request: ExplainRequest) -> dict[str, Any]:
     """Plain-English explanation of selected text from one answer's passages (not evidence)."""
     return get_manager().get(session_id).assistant.explain(
         request.answer_id, request.selected_text, request.follow_up, request.previous)
+
+
+@app.post("/sessions/{session_id}/suggest")
+def post_suggest(session_id: str, request: SuggestRequest) -> dict[str, Any]:
+    """Three questions to ask next, generated from this chat's papers and the question (cached per answer)."""
+    return get_manager().get(session_id).assistant.suggest(request.question, request.answer_id)
 
 
 @app.get("/sessions/{session_id}/glossary")

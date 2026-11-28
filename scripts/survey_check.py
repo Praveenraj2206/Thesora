@@ -1,6 +1,7 @@
 """Retrieval-level check of TEST_PLAN_SURVEY_PAPERS.md on the six survey papers (no LLM needed).
 
-Usage: python scripts/survey_check.py "C:/thesora_survey"
+Usage: python scripts/survey_check.py            (uses data/papers)
+       python scripts/survey_check.py "C:/some/folder"
 
 For each test question it checks that the passage holding the answer is among the passages the model
 would see (or that Thesora abstains for the out-of-scope questions), then runs Compare coverage, three
@@ -12,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 warnings.filterwarnings("ignore"); logging.disable(logging.WARNING)
 from app import config
 from app.pipelines.rag import ResearchAssistant
-D = sys.argv[1]
+D = sys.argv[1] if len(sys.argv) > 1 else str(Path(__file__).resolve().parents[1] / "data" / "papers")
 a = ResearchAssistant(); t = time.time(); a.ingest_folder(D); print(f"ingest {time.time()-t:.0f}s, {len(a.store)} chunks")
 Q = [  # question, regex the answer passage must contain, expect_abstain
  ("What is omni-moderation-latest used for?", r"omni-moderation", False),

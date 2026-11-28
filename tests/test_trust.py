@@ -59,9 +59,10 @@ class TrustTests(unittest.TestCase):
         self.assertEqual(cells[1]["evidence"][0]["page"], 11)
 
     def test_metadata_labels_bibtex_and_notes(self):
-        meta = trust.extract_metadata(ROOT / "data" / "papers" / "DejaVu2.pdf", "DejaVu2.pdf")
+        meta = trust.extract_metadata(ROOT / "data" / "papers" / "PaperQA.pdf", "PaperQA.pdf")
         self.assertTrue(meta["auto"])
-        self.assertTrue(meta["title"])
+        self.assertTrue(meta["title"].startswith("PaperQA"))
+        self.assertEqual((meta["authors"][0], meta["year"]), ("Jakub Lála", 2023))
         meta = {"doc_id": "x.pdf", "title": "A Study", "authors": ["Ann Smith", "Bo Lee"], "year": 2023, "doi": None}
         self.assertEqual(trust.short_label(meta, 4, "Results"), "Smith et al., 2023 · p.4 · Results")
         self.assertIn("author = {Ann Smith and Bo Lee}", trust.bibtex([meta]))

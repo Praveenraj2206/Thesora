@@ -306,8 +306,9 @@ class CompareCoverageTests(unittest.TestCase):
             raise unittest.SkipTest(f"models unavailable: {exc}")
 
     def test_every_paper_gets_passages_even_when_one_dominates(self):
-        chunks = self.assistant.retriever.retrieve_across_documents("molecular property prediction")
-        self.assertEqual({c.chunk.doc_id for c in chunks}, {"DejaVu1.pdf", "DejaVu2.pdf", "DejaVu3.pdf"})
+        chunks = self.assistant.retriever.retrieve_across_documents("mxbai-rerank-large-v1 latency on the reranking benchmark")
+        papers = {p.name for p in (Path(__file__).resolve().parents[1] / "data" / "papers").glob("*.pdf")}
+        self.assertEqual({c.chunk.doc_id for c in chunks}, papers)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 [server]
-maxUploadSize = 100  # MB per file; matches MAX_UPLOAD_MB in app/config.py
+maxUploadSize = 15  # MB per file; matches MAX_UPLOAD_MB in app/config.py
 
 [browser]
 gatherUsageStats = false
